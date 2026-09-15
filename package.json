@@ -1,0 +1,157 @@
+{
+    "name": "@rapidmx/booking-plugin",
+    "version": "0.1.0",
+    "description": "RapidMX plugin that provides public booking pages, booking types and bookings.",
+    "repository": "https://github.com/RapidMX/booking.git",
+    "author": "RapidREST <rapidrests@gmail.com>",
+    "license": "MPL-2.0",
+    "contributors": [
+        "Jean-Philippe Steinmetz"
+    ],
+    "scripts": {
+        "build": "yarn lint && rimraf dist && tsc && tsc -p tsconfig.apps.json",
+        "lint": "eslint ./src ./apps ./test",
+        "local-audit": "yarn install && yarn npm audit -A -R \"$@\"",
+        "checkup": "yarn dlx @yarnpkg/doctor \"$@\"",
+        "dependency-check": "yarn dlx depcheck \"$@\"",
+        "report-coverage": "cat ./coverage/lcov.info | coveralls",
+        "test": "vitest run",
+        "test:prod": "npm run lint && vitest run --coverage",
+        "test:watch": "vitest",
+        "release": "npx @rapidrest/cli release",
+        "prepublish": "yarn build"
+    },
+    "peerDependencies": {
+        "@rapidmx/react-shared": ">=0.6.0 <1",
+        "@rapidmx/restapi": ">=0.12.0 <1",
+        "@rapidmx/web-client": ">=0.6.0 <1",
+        "@rapidrest/core": "5.x",
+        "@rapidrest/service-core": "2.x",
+        "react": "19.x",
+        "react-dom": "19.x"
+    },
+    "dependencies": {
+        "nodemailer": "^10.0.1"
+    },
+    "devDependencies": {
+        "@rapidmx/react-shared": "portal:../react-shared",
+        "@rapidmx/restapi": "portal:../restapi",
+        "@rapidmx/web-client": "portal:../web-client",
+        "@rapidrest/core": "^5.2.2",
+        "@rapidrest/service-core": "^2.1.0",
+        "@swc/core": "^1.16.2",
+        "@testing-library/dom": "^10.4.1",
+        "@testing-library/jest-dom": "^7.0.1",
+        "@testing-library/react": "^16.3.3",
+        "@testing-library/user-event": "^14.6.7",
+        "@types/nconf": "^0.10.7",
+        "@types/node": "^26.5.0",
+        "@types/nodemailer": "^8.0.1",
+        "@types/react": "^19.2.18",
+        "@types/react-dom": "^19.2.7",
+        "@typescript-eslint/eslint-plugin": "^8.70.0",
+        "@typescript-eslint/parser": "^8.70.0",
+        "@vitest/coverage-v8": "^5.0.0",
+        "better-sqlite3": "^13.0.3",
+        "eslint": "^10.10.0",
+        "eslint-config-prettier": "^10.1.8",
+        "eslint-plugin-import": "^2.32.0",
+        "eslint-plugin-jsdoc": "^64.3.6",
+        "globals": "^17.12.0",
+        "jsdom": "^30.0.1",
+        "lodash-es": "^4.18.1",
+        "mongodb": "^7.6.0",
+        "mongodb-memory-server": "^11.2.0",
+        "nconf": "^0.13.0",
+        "openapi3-ts": "^4.6.1",
+        "prom-client": "^15.1.3",
+        "react": "^19.2.8",
+        "react-dom": "^19.2.8",
+        "redis": "^6.2.1",
+        "reflect-metadata": "^0.2.2",
+        "rimraf": "^6.1.3",
+        "ts-node": "^10.9.2",
+        "tsx": "^4.23.13",
+        "typeorm": "^1.1.1",
+        "typescript": "^6.0.3",
+        "unplugin-swc": "^1.6.0",
+        "uuid": "^14.0.2",
+        "vite": "^8.2.2",
+        "vitest": "^5.0.0",
+        "winston": "^3.19.0"
+    },
+    "resolutions": {
+        "@rapidmx/restapi": "portal:../restapi",
+        "@rapidmx/react-shared": "portal:../react-shared",
+        "@rapidmx/web-client": "portal:../web-client"
+    },
+    "packageManager": "yarn@4.5.3",
+    "engines": {
+        "node": ">=24.0.0"
+    },
+    "publishConfig": {
+        "registry": "https://registry.npmjs.org/"
+    },
+    "type": "module",
+    "main": "dist/lib/index.js",
+    "exports": {
+        ".": {
+            "import": "./dist/lib/index.js",
+            "types": "./dist/types/index.d.ts"
+        },
+        "./mongo": {
+            "import": "./dist/lib/mongo.js",
+            "types": "./dist/types/mongo.d.ts"
+        },
+        "./sql": {
+            "import": "./dist/lib/sql.js",
+            "types": "./dist/types/sql.d.ts"
+        }
+    },
+    "typings": "dist/types/index.d.ts",
+    "files": [
+        "apps",
+        "dist"
+    ],
+    "rapidmx": {
+        "plugin": {
+            "apiVersion": 1,
+            "displayName": "Booking pages",
+            "description": "Lets mailbox owners publish booking links that anyone can use to pick an open slot on their calendar, with public booking pages at /book and a Booking Links screen in Settings.",
+            "mailboxScopedData": true,
+            "settings": [
+                {
+                    "key": "mail:booking:public_url",
+                    "label": "Public booking page URL",
+                    "type": "string",
+                    "default": "",
+                    "help": "The address of the public booking pages, for example https://mail.example.com/book. Booking emails include a link to manage the booking only when this is set."
+                }
+            ],
+            "ui": {
+                "apps": [
+                    {
+                        "id": "book",
+                        "host": "public",
+                        "mount": "/book",
+                        "dir": "apps/book"
+                    },
+                    {
+                        "id": "booking-types",
+                        "host": "www",
+                        "mount": "/settings/booking-types",
+                        "dir": "apps/settings-booking-types"
+                    }
+                ],
+                "settingsSections": [
+                    {
+                        "id": "booking-types",
+                        "label": "Booking Links",
+                        "href": "/settings/booking-types",
+                        "icon": "HiOutlineCalendarDays"
+                    }
+                ]
+            }
+        }
+    }
+}
