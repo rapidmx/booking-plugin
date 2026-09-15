@@ -1,6 +1,6 @@
 # Release Notes
 
-## v0.1.0
+## Unreleased
 
 > **Before publishing:** `package.json` `resolutions` and `devDependencies` still link `@rapidmx/restapi`,
 > `@rapidmx/react-shared` and `@rapidmx/web-client` from sibling checkouts (`portal:../restapi`,

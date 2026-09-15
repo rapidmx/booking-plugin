@@ -1,7 +1,7 @@
 {
     "name": "@rapidmx/booking-plugin",
     "version": "0.1.0",
-    "description": "RapidMX plugin that provides public booking pages, booking types and bookings.",
+    "description": "RapidMX plugin that provides Calendly-style public booking of meetings.",
     "repository": "https://github.com/RapidMX/booking.git",
     "author": "RapidREST <rapidrests@gmail.com>",
     "license": "MPL-2.0",
@@ -34,11 +34,11 @@
         "nodemailer": "^10.0.1"
     },
     "devDependencies": {
-        "@rapidmx/react-shared": "portal:../react-shared",
-        "@rapidmx/restapi": "portal:../restapi",
-        "@rapidmx/web-client": "portal:../web-client",
+        "@rapidmx/react-shared": "^0.6.0",
+        "@rapidmx/restapi": "^0.12.0",
+        "@rapidmx/web-client": "^0.6.0",
         "@rapidrest/core": "^5.2.2",
-        "@rapidrest/service-core": "^2.1.0",
+        "@rapidrest/service-core": "^2.1.1",
         "@swc/core": "^1.16.2",
         "@testing-library/dom": "^10.4.1",
         "@testing-library/jest-dom": "^7.0.1",
@@ -81,9 +81,9 @@
         "winston": "^3.19.0"
     },
     "resolutions": {
-        "@rapidmx/restapi": "portal:../restapi",
-        "@rapidmx/react-shared": "portal:../react-shared",
-        "@rapidmx/web-client": "portal:../web-client"
+        "@rapidmx/react-shared": "^0.6.0",
+        "@rapidmx/restapi": "^0.12.0",
+        "@rapidmx/web-client": "^0.6.0"
     },
     "packageManager": "yarn@4.5.3",
     "engines": {

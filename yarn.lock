@@ -937,11 +937,11 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@rapidmx/booking-plugin@workspace:."
   dependencies:
-    "@rapidmx/react-shared": "portal:../react-shared"
-    "@rapidmx/restapi": "portal:../restapi"
-    "@rapidmx/web-client": "portal:../web-client"
+    "@rapidmx/react-shared": "npm:^0.6.0"
+    "@rapidmx/restapi": "npm:^0.12.0"
+    "@rapidmx/web-client": "npm:^0.6.0"
     "@rapidrest/core": "npm:^5.2.2"
-    "@rapidrest/service-core": "npm:^2.1.0"
+    "@rapidrest/service-core": "npm:^2.1.1"
     "@swc/core": "npm:^1.16.2"
     "@testing-library/dom": "npm:^10.4.1"
     "@testing-library/jest-dom": "npm:^7.0.1"
@@ -994,9 +994,9 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@rapidmx/react-shared@portal:../react-shared::locator=%40rapidmx%2Fbooking-plugin%40workspace%3A.":
-  version: 0.0.0-use.local
-  resolution: "@rapidmx/react-shared@portal:../react-shared::locator=%40rapidmx%2Fbooking-plugin%40workspace%3A."
+"@rapidmx/react-shared@npm:^0.6.0":
+  version: 0.6.0
+  resolution: "@rapidmx/react-shared@npm:0.6.0"
   dependencies:
     "@emoji-mart/data": "npm:^1.2.1"
     "@peculiar/x509": "npm:^2.1.0"
@@ -1011,12 +1011,13 @@ __metadata:
   peerDependencies:
     react: 19.x
     react-dom: 19.x
+  checksum: 10c0/52de1b5acb6ec731600af0019733317ec7b16b2a14dd56f808de80a2ea5a4dbadb7a1af536f960e7c7ea8ccb114fdbf980b72144dbd4ba5570a69a3a6d4dd81b
   languageName: node
-  linkType: soft
+  linkType: hard
 
-"@rapidmx/restapi@portal:../restapi::locator=%40rapidmx%2Fbooking-plugin%40workspace%3A.":
-  version: 0.0.0-use.local
-  resolution: "@rapidmx/restapi@portal:../restapi::locator=%40rapidmx%2Fbooking-plugin%40workspace%3A."
+"@rapidmx/restapi@npm:^0.12.0":
+  version: 0.12.0
+  resolution: "@rapidmx/restapi@npm:0.12.0"
   dependencies:
     "@peculiar/x509": "npm:^2.1.0"
     acme-client: "npm:^5.4.0"
@@ -1048,17 +1049,18 @@ __metadata:
       optional: true
     pdf-parse:
       optional: true
+  checksum: 10c0/24e8d88e957c8da763462a86562e812f46fd6df09eeae3135fb4879f4abfc046dd456a9c1cd9f04d911c2c9f9cb914da3cde2176fceba52819023d8a9ea3ce41
   languageName: node
-  linkType: soft
+  linkType: hard
 
-"@rapidmx/web-client@portal:../web-client::locator=%40rapidmx%2Fbooking-plugin%40workspace%3A.":
-  version: 0.0.0-use.local
-  resolution: "@rapidmx/web-client@portal:../web-client::locator=%40rapidmx%2Fbooking-plugin%40workspace%3A."
+"@rapidmx/web-client@npm:^0.6.0":
+  version: 0.6.0
+  resolution: "@rapidmx/web-client@npm:0.6.0"
   dependencies:
     "@dnd-kit/core": "npm:^6.3.1"
     "@journeyapps/wa-sqlite": "npm:^2.0.4"
     "@peculiar/x509": "npm:^2.1.0"
-    "@rapidmx/react-shared": "patch:@rapidmx/react-shared@npm%3A0.4.0#~/.yarn/patches/@rapidmx-react-shared-npm-0.4.0-e713beecf2.patch"
+    "@rapidmx/react-shared": "npm:^0.6.0"
     "@tiptap/core": "npm:^3.31.3"
     "@tiptap/extension-highlight": "npm:^3.31.3"
     "@tiptap/extension-image": "npm:^3.31.3"
@@ -1080,8 +1082,9 @@ __metadata:
   peerDependencies:
     react: 19.x
     react-dom: 19.x
+  checksum: 10c0/45730e4163367fc61b637d1805d52cb81c5de294fe77faa15c7fb23f3be4b7493cc96f4a861f724a5d43250c6b778a020b339e943ce6e956c47dab094ea27a39
   languageName: node
-  linkType: soft
+  linkType: hard
 
 "@rapidrest/core@npm:^5.2.2":
   version: 5.2.2
@@ -1106,9 +1109,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@rapidrest/service-core@npm:^2.1.0":
-  version: 2.1.0
-  resolution: "@rapidrest/service-core@npm:2.1.0"
+"@rapidrest/service-core@npm:^2.1.1":
+  version: 2.1.1
+  resolution: "@rapidrest/service-core@npm:2.1.1"
   dependencies:
     axios: "npm:^1.20.0"
     dayjs: "npm:^1.11.23"
@@ -1138,7 +1141,7 @@ __metadata:
       optional: true
     uWebSockets.js:
       optional: true
-  checksum: 10c0/4b2a7615d41ff51ca67c17c9506b851a472ce6a51d4d6d04cd7b9c76a7aca38656082247049fd682307efc7bb533ded68be96ce6d9ad125af62b51ad8515d3fa
+  checksum: 10c0/474c9f0c19be4fab0e95d2a814abed158ae31e78caa37a97716ba34b028db98f668b8e3ae3f0d1f7d8073c3d1057532ffb68064fa9feceb05cfb56844a0641c0
   languageName: node
   linkType: hard
 
