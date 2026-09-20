@@ -7,12 +7,14 @@ import { request } from "@rapidrest/service-core/test";
 import { MongoConnection, MongoRepository, Server, ObjectFactory, ConnectionManager, ACLAction } from "@rapidrest/service-core";
 import { JWTUtils, Logger } from "@rapidrest/core";
 import * as uuid from "uuid";
+import { BookingMongo } from "../../../src/models/mongo/BookingMongo.js";
 import { BookingTypeMongo } from "../../../src/models/mongo/BookingTypeMongo.js";
 import { FolderMongo, MailboxMongo } from "@rapidmx/restapi/mongo";
 import { FolderType } from "@rapidmx/restapi";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { registerTestDoubles } from "../../testDoubles.js";
 import { bookingTypeFolderSuite } from "../bookingTypeFolderSuite.js";
+import { bookingTypeMailboxSuite } from "../bookingTypeMailboxSuite.js";
 
 const mongod: MongoMemoryServer = new MongoMemoryServer({
     instance: {
@@ -29,6 +31,7 @@ describe("Route:BookingTypeMongo Tests", () => {
     let mailboxRepo: MongoRepository<MailboxMongo>;
     let bookingTypeRepo: MongoRepository<BookingTypeMongo>;
     let folderRepo: MongoRepository<FolderMongo>;
+    let bookingRepo: MongoRepository<BookingMongo>;
     let aclRepo: MongoRepository<any>;
 
     const owner: any = { uid: uuid.v4(), roles: [], elevated: Date.now() };
@@ -115,6 +118,7 @@ describe("Route:BookingTypeMongo Tests", () => {
             mailboxRepo = conn.getMongoRepository("MailboxMongo");
             bookingTypeRepo = conn.getMongoRepository("BookingTypeMongo");
             folderRepo = conn.getMongoRepository("FolderMongo");
+            bookingRepo = conn.getMongoRepository("BookingMongo");
         } else {
             throw new Error("Could not find mongo connection");
         }
@@ -127,7 +131,7 @@ describe("Route:BookingTypeMongo Tests", () => {
     });
 
     beforeEach(async () => {
-        for (const repo of [mailboxRepo, bookingTypeRepo, folderRepo]) {
+        for (const repo of [mailboxRepo, bookingTypeRepo, folderRepo, bookingRepo]) {
             try {
                 await repo.clear();
             } catch (err: any) {
@@ -399,6 +403,43 @@ describe("Route:BookingTypeMongo Tests", () => {
 
             expect(result.status).toBe(403);
         });
+    });
+    bookingTypeMailboxSuite({
+        app: () => server.getApplication(),
+        baseUrl,
+        ownerUid: owner.uid,
+        ownerToken,
+        otherUserUid: otherUser.uid,
+        otherUserToken,
+        createMailbox,
+        createSharedMailbox: async (userUid: string, actions: string[]) => {
+            const result: MailboxMongo = await mailboxRepo.save(
+                new MailboxMongo({
+                    primarySmtpAddress: `shared-${uuid.v4()}@example.com`,
+                    aliasAddresses: [],
+                    displayName: "Shared",
+                    timezone: "UTC",
+                    quotaBytes: 1_000_000_000,
+                    usedBytes: 0,
+                }),
+            );
+            await aclRepo.save({
+                uid: result.uid,
+                dateCreated: new Date(),
+                dateModified: new Date(),
+                version: 0,
+                records: [{ userOrRoleId: userUid, actions }],
+                parentUid: "Mailbox",
+            });
+            await createCalendarFolder(result.uid);
+            return result;
+        },
+        createCalendarFolder,
+        route: () => objectFactory.getInstance("routes.BookingTypeRoute"),
+        createBooking: async (bookingTypeUid: string, mailboxUid: string) => {
+            await bookingRepo.save(new BookingMongo({ bookingTypeUid, mailboxUid, manageToken: uuid.v4() }));
+        },
+        body,
     });
     bookingTypeFolderSuite({
         app: () => server.getApplication(),

@@ -6,3 +6,4 @@ export { CalendarEventSQL, FolderSQL, MailboxSQL } from "@rapidmx/restapi/sql";
 // This plugin's own models.
 export { BookingTypeSQL } from "../../../src/models/sql/BookingTypeSQL.js";
 export { BookingSQL } from "../../../src/models/sql/BookingSQL.js";
+export { BookingProfileSQL } from "../../../src/models/sql/BookingProfileSQL.js";

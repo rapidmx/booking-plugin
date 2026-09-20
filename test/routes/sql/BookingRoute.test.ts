@@ -17,12 +17,14 @@ import { Logger } from "@rapidrest/core";
 import * as uuid from "uuid";
 import { Repository } from "typeorm";
 import { BookingSQL } from "../../../src/models/sql/BookingSQL.js";
+import { BookingProfileSQL } from "../../../src/models/sql/BookingProfileSQL.js";
 import { BookingTypeSQL } from "../../../src/models/sql/BookingTypeSQL.js";
 import { CalendarEventSQL, FolderSQL, MailboxSQL } from "@rapidmx/restapi/sql";
 import { BusyStatus, CalendarEventStatus, FolderType, RecipientType, RecurrenceFrequency } from "@rapidmx/restapi";
 import { BookingStatus } from "../../../src/models/types.js";
 import { RecordingMailTransport, registerTestDoubles } from "../../testDoubles.js";
 import { bookingSecuritySuite } from "../bookingSecuritySuite.js";
+import { bookingMailboxSuite } from "../bookingMailboxSuite.js";
 
 // Every slot below sits on one fixed, far-future date so that it is always in the future no matter when the
 // suite runs, WITHOUT freezing the clock. Freezing it with `vi.useFakeTimers({ toFake: ["Date"] })` is
@@ -53,6 +55,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
     let folderRepo: Repository<FolderSQL>;
     let bookingTypeRepo: Repository<BookingTypeSQL>;
     let bookingRepo: Repository<BookingSQL>;
+    let bookingProfileRepo: Repository<BookingProfileSQL>;
     let calendarEventRepo: Repository<CalendarEventSQL>;
     let mailTransport: RecordingMailTransport;
 
@@ -103,7 +106,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         );
     };
 
-    const book = (slug: string, body: any) => request(server.getApplication()).post(`${baseUrl}/types/${slug}`).send(body);
+    const book = (slug: string, body: any) => request(server.getApplication()).post(`${baseUrl}/types/${mailbox.uid}/${slug}`).send(body);
 
     const validBooking = (start: string = SLOT_1) => ({
         start,
@@ -124,6 +127,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             folderRepo = conn.getRepository(FolderSQL);
             bookingTypeRepo = conn.getRepository(BookingTypeSQL);
             bookingRepo = conn.getRepository(BookingSQL);
+            bookingProfileRepo = conn.getRepository(BookingProfileSQL);
             calendarEventRepo = conn.getRepository(CalendarEventSQL);
         } else {
             throw new Error("Could not find sql connection");
@@ -138,7 +142,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
 
     beforeEach(async () => {
         // Child rows first - these tables are shared on disk with every other SQL test file in the run.
-        for (const repo of [bookingRepo, calendarEventRepo, bookingTypeRepo, folderRepo, mailboxRepo]) {
+        for (const repo of [bookingRepo, calendarEventRepo, bookingTypeRepo, bookingProfileRepo, folderRepo, mailboxRepo]) {
             await repo.clear();
         }
         mailTransport.sent = [];
@@ -166,22 +170,22 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         );
     });
 
-    describe("GET /types/:slug", () => {
-        it("Returns the public details of an enabled booking type, and none of the internal identifiers.", async () => {
+    describe("GET /types/:mailboxUid/:slug", () => {
+        it("Returns the public details of an enabled booking type, and no internal identifier (the mailbox address is part of the link).", async () => {
             const bookingType = await createBookingType();
 
-            const result = await request(server.getApplication()).get(`${baseUrl}/types/${bookingType.slug}`);
+            const result = await request(server.getApplication()).get(`${baseUrl}/types/${mailbox.uid}/${bookingType.slug}`);
 
             expect(result.status).toBe(200);
             expect(result.body.name).toBe("Intro Call");
             expect(result.body.hostDisplayName).toBe("Ada Lovelace");
             expect(result.body.durationMinutes).toBe(60);
-            expect(result.body.mailboxUid).toBeUndefined();
+            expect(result.body.mailboxUid).toBe(mailbox.uid);
             expect(result.body.calendarFolderUid).toBeUndefined();
         });
 
         it("Returns 404 for a slug that does not exist.", async () => {
-            const result = await request(server.getApplication()).get(`${baseUrl}/types/nope`);
+            const result = await request(server.getApplication()).get(`${baseUrl}/types/${mailbox.uid}/nope`);
 
             expect(result.status).toBe(404);
         });
@@ -189,18 +193,18 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         it("Returns 404 for a disabled booking type, so a paused link looks like one that never existed.", async () => {
             const bookingType = await createBookingType({ enabled: false });
 
-            const result = await request(server.getApplication()).get(`${baseUrl}/types/${bookingType.slug}`);
+            const result = await request(server.getApplication()).get(`${baseUrl}/types/${mailbox.uid}/${bookingType.slug}`);
 
             expect(result.status).toBe(404);
         });
     });
 
-    describe("GET /types/:slug/slots", () => {
+    describe("GET /types/:mailboxUid/:slug/slots", () => {
         it("Lists the slots the booking type's availability allows.", async () => {
             const bookingType = await createBookingType();
 
             const result = await request(server.getApplication()).get(
-                `${baseUrl}/types/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
             );
 
             expect(result.status).toBe(200);
@@ -212,7 +216,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             await createEvent();
 
             const result = await request(server.getApplication()).get(
-                `${baseUrl}/types/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
             );
 
             expect(result.body.map((slot: any) => slot.start)).toEqual([SLOT_2]);
@@ -223,7 +227,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             await createEvent({ busyStatus: BusyStatus.FREE });
 
             const result = await request(server.getApplication()).get(
-                `${baseUrl}/types/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
             );
 
             expect(result.body.map((slot: any) => slot.start)).toEqual([SLOT_1, SLOT_2]);
@@ -240,7 +244,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             });
 
             const result = await request(server.getApplication()).get(
-                `${baseUrl}/types/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
             );
 
             expect(result.body.map((slot: any) => slot.start)).toEqual([SLOT_2]);
@@ -255,7 +259,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             });
 
             const result = await request(server.getApplication()).get(
-                `${baseUrl}/types/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
             );
 
             expect(result.body.map((slot: any) => slot.start)).toEqual([SLOT_1]);
@@ -264,7 +268,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         it("Defaults the window when no from/to is supplied.", async () => {
             const bookingType = await createBookingType();
 
-            const result = await request(server.getApplication()).get(`${baseUrl}/types/${bookingType.slug}/slots`);
+            const result = await request(server.getApplication()).get(`${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots`);
 
             expect(result.status).toBe(200);
             expect(result.body.length).toBeGreaterThan(0);
@@ -274,7 +278,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             const bookingType = await createBookingType({ availability: [] });
 
             const result = await request(server.getApplication()).get(
-                `${baseUrl}/types/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
             );
 
             expect(result.body).toEqual([]);
@@ -283,7 +287,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         it("Rejects an unparseable from (400).", async () => {
             const bookingType = await createBookingType();
 
-            const result = await request(server.getApplication()).get(`${baseUrl}/types/${bookingType.slug}/slots?from=yesterday`);
+            const result = await request(server.getApplication()).get(`${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?from=yesterday`);
 
             expect(result.status).toBe(400);
         });
@@ -291,13 +295,13 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         it("Rejects an unparseable to (400).", async () => {
             const bookingType = await createBookingType();
 
-            const result = await request(server.getApplication()).get(`${baseUrl}/types/${bookingType.slug}/slots?to=someday`);
+            const result = await request(server.getApplication()).get(`${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?to=someday`);
 
             expect(result.status).toBe(400);
         });
     });
 
-    describe("POST /types/:slug", () => {
+    describe("POST /types/:mailboxUid/:slug", () => {
         it("Books a slot, creating the calendar event and mailing the booker an invite with their manage link.", async () => {
             const bookingType = await createBookingType();
 
@@ -705,5 +709,35 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         },
         findBookings: async () => await bookingRepo.find(),
         rateLimiter: () => objectFactory.getInstance(RateLimiter),
+    });
+    bookingMailboxSuite({
+        app: () => server.getApplication(),
+        baseUrl,
+        mailboxUid: () => mailbox.uid,
+        createBookingType,
+        createOtherMailbox: async (uid?: string) => {
+            const other: MailboxSQL = await mailboxRepo.save(
+                new MailboxSQL({
+                    ...(uid ? { uid } : {}),
+                    ownerUserUid: uuid.v4(),
+                    primarySmtpAddress: `grace-${uuid.v4()}@example.com`,
+                    aliasAddresses: [],
+                    displayName: "Grace Hopper",
+                    timezone: "UTC",
+                    quotaBytes: 1_000_000_000,
+                    usedBytes: 0,
+                }),
+            );
+            const folder: FolderSQL = await folderRepo.save(
+                new FolderSQL({ mailboxUid: other.uid, name: "Calendar", type: FolderType.CALENDAR, unreadCount: 0, totalCount: 0, syncKeyVersion: 0 }),
+            );
+            return { uid: other.uid, calendarFolderUid: folder.uid };
+        },
+        createProfile: async (mailboxUid: string, data: any) => {
+            await bookingProfileRepo.save(new BookingProfileSQL({ uid: mailboxUid, mailboxUid, ...data }));
+        },
+        findBookings: async () => await bookingRepo.find(),
+        rateLimiter: () => objectFactory.getInstance(RateLimiter),
+        route: () => objectFactory.getInstance("routes.BookingRoute"),
     });
 });

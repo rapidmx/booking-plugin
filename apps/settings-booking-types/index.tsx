@@ -4,8 +4,9 @@
 ///////////////////////////////////////////////////////////////////////////////
 import React, { useEffect, useState } from "react";
 import { ApiRequestError } from "@rapidmx/react-shared/util/api.js";
-import { BookingType, listBookingTypes } from "../shared/bookingApi.js";
+import { BookingType, bookingPublicPath, bookingPublicUrl, listBookingTypes } from "../shared/bookingApi.js";
 import SettingsShell, { SettingsShellProps, useSettingsShell } from "@rapidmx/web-client/shared/components/settings/layout/SettingsShell.js";
+import BookingProfileEditor from "../shared/components/BookingProfileEditor.js";
 import Alert from "@rapidmx/react-shared/components/feedback/Alert.js";
 import Button from "@rapidmx/react-shared/components/buttons/Button.js";
 
@@ -20,10 +21,11 @@ export default function SettingsBookingTypesPage(props: SettingsBookingTypesPage
 }
 
 function BookingTypesContent() {
-    const { mailboxUid } = useSettingsShell();
+    const { mailboxUid, mailboxes } = useSettingsShell();
     const [bookingTypes, setBookingTypes] = useState<BookingType[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [copiedUid, setCopiedUid] = useState<string | null>(null);
 
     // `SettingsShell` only ever renders its children once `mailboxUid` has resolved — same established
     // non-null pattern as `@rapidmx/web-client`'s filter settings page.
@@ -34,9 +36,21 @@ function BookingTypesContent() {
             .finally(() => setLoading(false));
     }, [mailboxUid]);
 
+    /** Copies the link's public URL — what a host pastes into an email or a profile. */
+    async function handleCopy(bookingType: BookingType) {
+        try {
+            await navigator.clipboard.writeText(bookingPublicUrl(bookingType.mailboxUid, bookingType.slug));
+            setError(null);
+            setCopiedUid(bookingType.uid);
+            setTimeout(() => setCopiedUid((current) => (current === bookingType.uid ? null : current)), 2000);
+        } catch {
+            setError("Could not copy the link. Open the booking link and copy its address by hand.");
+        }
+    }
+
     return (
         <div className="flex-1 min-w-0 overflow-y-auto p-6">
-            <div className="max-w-3xl">
+            <div className="max-w-4xl">
                 <div className="flex items-center justify-between mb-5">
                     <h1 className="text-lg font-bold tracking-tight">Booking Links</h1>
                     <a href={`/settings/booking-types/new?mailboxUid=${encodeURIComponent(mailboxUid!)}`}>
@@ -49,6 +63,12 @@ function BookingTypesContent() {
                     Share a link and let anyone pick a real open slot on your calendar — no account needed on
                     their end.
                 </p>
+
+                <BookingProfileEditor
+                    key={mailboxUid}
+                    mailboxUid={mailboxUid!}
+                    name={mailboxes.find((mailbox) => mailbox.uid === mailboxUid)?.displayName ?? mailboxUid!}
+                />
 
                 {error && <Alert>{error}</Alert>}
 
@@ -75,10 +95,20 @@ function BookingTypesContent() {
                                 {bookingTypes.map((bookingType) => (
                                     <tr key={bookingType.uid}>
                                         <td className="py-2.5 px-2.5 border-b border-border">{bookingType.name}</td>
-                                        <td className="py-2.5 px-2.5 border-b border-border">/book/{bookingType.slug}</td>
+                                        <td className="py-2.5 px-2.5 border-b border-border break-all">
+                                            {bookingPublicPath(bookingType.mailboxUid, bookingType.slug)}
+                                        </td>
                                         <td className="py-2.5 px-2.5 border-b border-border">{bookingType.durationMinutes} min</td>
                                         <td className="py-2.5 px-2.5 border-b border-border">{bookingType.enabled ? "Yes" : "No"}</td>
-                                        <td className="py-2.5 px-2.5 border-b border-border text-right">
+                                        <td className="py-2.5 px-2.5 border-b border-border text-right whitespace-nowrap">
+                                            <button
+                                                type="button"
+                                                aria-label={`Copy link to ${bookingType.name}`}
+                                                className="text-primary-dark hover:underline font-medium mr-4"
+                                                onClick={() => handleCopy(bookingType)}
+                                            >
+                                                {copiedUid === bookingType.uid ? "Copied" : "Copy link"}
+                                            </button>
                                             <a
                                                 href={`/settings/booking-types/${encodeURIComponent(bookingType.uid)}?mailboxUid=${encodeURIComponent(mailboxUid!)}`}
                                                 className="text-primary-dark hover:underline font-medium"

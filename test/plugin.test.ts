@@ -36,39 +36,51 @@ describe("plugin entry points", () => {
         expect(Object.fromEntries(Object.entries(entry).map(([name, clazz]) => [name, describeExport(clazz)]))).toEqual({
             [`BookingTypeRoute${suffix}`]: "route /api/mail/booking-types",
             [`BookingRoute${suffix}`]: "route /api/mail/bookings",
+            [`BookingProfileRoute${suffix}`]: "route /api/mail/booking-profiles",
             [`BookingType${suffix}`]: `model ${datastore} mailbox-scoped`,
             [`Booking${suffix}`]: `model ${datastore} mailbox-scoped`,
+            [`BookingProfile${suffix}`]: `model ${datastore} mailbox-scoped`,
         });
     });
 
     it("keeps the collection names, index names and ACL uids of the models core used to define", () => {
-        const bookingTypeIndexes: string[] = ["bookingtype_slug", "bookingtype_mailbox"];
+        // A slug is only unique within its mailbox, so the unique index is on (mailboxUid, slug).
+        const bookingTypeIndexes: string[] = ["bookingtype_mailbox_slug", "bookingtype_mailbox"];
         const bookingIndexes: string[] = ["booking_manage_token", "booking_type", "booking_mailbox"];
         for (const [clazz, entityName, acl, indexes] of [
             [MongoEntry.BookingTypeMongo, "booking_type_mongo", "BookingType", bookingTypeIndexes],
             [MongoEntry.BookingMongo, "booking_mongo", "Booking", bookingIndexes],
+            [MongoEntry.BookingProfileMongo, "booking_profile_mongo", "BookingProfile", [] as string[]],
             [SqlEntry.BookingTypeSQL, "booking_type_sql", "BookingType", bookingTypeIndexes],
             [SqlEntry.BookingSQL, "booking_sql", "Booking", bookingIndexes],
+            [SqlEntry.BookingProfileSQL, "booking_profile_sql", "BookingProfile", [] as string[]],
         ] as const) {
             expect(Reflect.getMetadata("rrst:entityName", clazz)).toBe(entityName);
             expect(Reflect.getMetadata("rrst:classACL", clazz).uid).toBe(acl);
-            expect(PersistenceDecorators.getIndexMetadata(clazz).map((index: any) => index.name)).toEqual(expect.arrayContaining(indexes));
+            const indexNames: string[] = PersistenceDecorators.getIndexMetadata(clazz).map((index: any) => index.name);
+            expect(indexNames).toEqual(expect.arrayContaining(indexes));
+            // The old globally unique slug index must be gone, or a second mailbox could never reuse a slug.
+            expect(indexNames).not.toContain("bookingtype_slug");
         }
     });
 
     it("exports the backend-agnostic surface from the package root", () => {
         expect(Object.keys(RootEntry).sort()).toEqual(
             [
+                "BaseBookingProfileRoute",
                 "BaseBookingRoute",
                 "BaseBookingTypeRoute",
                 "BookingStatus",
                 "MAX_AVAILABILITY_WINDOWS",
+                "MAX_AVATAR_BYTES",
+                "MAX_BANNER_BYTES",
                 "MAX_BOOKING_WINDOW_DAYS",
                 "MAX_DATE_OVERRIDES",
                 "MAX_SLOTS_PER_RESPONSE",
                 "MIN_SLOT_MINUTES",
                 "generateCandidateSlots",
                 "normalizeSlug",
+                "profileImageVersion",
                 "subtractBusy",
                 "validateAvailability",
             ].sort(),

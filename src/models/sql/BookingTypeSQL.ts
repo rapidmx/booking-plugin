@@ -21,7 +21,7 @@ const { Nullable } = ObjectDecorators;
 @Entity()
 @MailboxScopedData()
 @Description("A bookable offering owned by a mailbox that an anonymous visitor can pick an appointment slot from.")
-@Index("bookingtype_slug", ["slug"], { unique: true })
+@Index("bookingtype_mailbox_slug", ["mailboxUid", "slug"], { unique: true })
 @Index("bookingtype_mailbox", ["mailboxUid"])
 @Protect(
     {
@@ -43,7 +43,7 @@ export class BookingTypeSQL extends BaseEntity implements BookingType {
     public calendarFolderUid: string = "";
 
     @Column()
-    @Description("The globally unique, URL-safe public identifier for this booking type.")
+    @Description("The URL-safe public identifier for this booking type, unique within its mailbox.")
     public slug: string = "";
 
     @Column()

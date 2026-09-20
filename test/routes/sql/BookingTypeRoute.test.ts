@@ -8,11 +8,13 @@ import { Server, ObjectFactory, ConnectionManager, ACLAction, AccessControlListS
 import { JWTUtils, Logger } from "@rapidrest/core";
 import * as uuid from "uuid";
 import { Repository } from "typeorm";
+import { BookingSQL } from "../../../src/models/sql/BookingSQL.js";
 import { BookingTypeSQL } from "../../../src/models/sql/BookingTypeSQL.js";
 import { FolderSQL, MailboxSQL } from "@rapidmx/restapi/sql";
 import { FolderType } from "@rapidmx/restapi";
 import { registerTestDoubles } from "../../testDoubles.js";
 import { bookingTypeFolderSuite } from "../bookingTypeFolderSuite.js";
+import { bookingTypeMailboxSuite } from "../bookingTypeMailboxSuite.js";
 
 describe("Route:BookingTypeSQL Tests", () => {
     const logger = Logger();
@@ -22,6 +24,7 @@ describe("Route:BookingTypeSQL Tests", () => {
     let mailboxRepo: Repository<MailboxSQL>;
     let bookingTypeRepo: Repository<BookingTypeSQL>;
     let folderRepo: Repository<FolderSQL>;
+    let bookingRepo: Repository<BookingSQL>;
     let aclRepo: Repository<AccessControlListSQL>;
 
     const owner: any = { uid: uuid.v4(), roles: [], elevated: Date.now() };
@@ -109,6 +112,7 @@ describe("Route:BookingTypeSQL Tests", () => {
             mailboxRepo = conn.getRepository(MailboxSQL);
             bookingTypeRepo = conn.getRepository(BookingTypeSQL);
             folderRepo = conn.getRepository(FolderSQL);
+            bookingRepo = conn.getRepository(BookingSQL);
         } else {
             throw new Error("Could not find sql connection");
         }
@@ -120,6 +124,7 @@ describe("Route:BookingTypeSQL Tests", () => {
     });
 
     beforeEach(async () => {
+        await bookingRepo.clear();
         await bookingTypeRepo.clear();
         await folderRepo.clear();
         await mailboxRepo.clear();
@@ -336,6 +341,43 @@ describe("Route:BookingTypeSQL Tests", () => {
 
             expect(result.status).toBe(403);
         });
+    });
+    bookingTypeMailboxSuite({
+        app: () => server.getApplication(),
+        baseUrl,
+        ownerUid: owner.uid,
+        ownerToken,
+        otherUserUid: otherUser.uid,
+        otherUserToken,
+        createMailbox,
+        createSharedMailbox: async (userUid: string, actions: string[]) => {
+            const result: MailboxSQL = await mailboxRepo.save(
+                new MailboxSQL({
+                    primarySmtpAddress: `shared-${uuid.v4()}@example.com`,
+                    aliasAddresses: [],
+                    displayName: "Shared",
+                    timezone: "UTC",
+                    quotaBytes: 1_000_000_000,
+                    usedBytes: 0,
+                }),
+            );
+            await aclRepo.save({
+                uid: result.uid,
+                dateCreated: new Date(),
+                dateModified: new Date(),
+                version: 0,
+                records: [{ userOrRoleId: userUid, actions }],
+                parentUid: "Mailbox",
+            });
+            await createCalendarFolder(result.uid);
+            return result;
+        },
+        createCalendarFolder,
+        route: () => objectFactory.getInstance("routes.BookingTypeRoute"),
+        createBooking: async (bookingTypeUid: string, mailboxUid: string) => {
+            await bookingRepo.save(new BookingSQL({ bookingTypeUid, mailboxUid, manageToken: uuid.v4() }));
+        },
+        body,
     });
     bookingTypeFolderSuite({
         app: () => server.getApplication(),

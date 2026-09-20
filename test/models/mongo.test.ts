@@ -7,6 +7,7 @@ import { isMailboxScopedData } from "@rapidmx/restapi";
 import { BookingStatus } from "../../src/models/types.js";
 import { BookingMongo } from "../../src/models/mongo/BookingMongo.js";
 import { BookingTypeMongo } from "../../src/models/mongo/BookingTypeMongo.js";
+import { BookingProfileMongo } from "../../src/models/mongo/BookingProfileMongo.js";
 
 describe("Mongo model default construction", () => {
     it("BookingTypeMongo falls back to class defaults when constructed with no data.", () => {
@@ -151,8 +152,53 @@ describe("Mongo model default construction", () => {
         expect(obj.status).toBe(BookingStatus.CONFIRMED);
     });
 
-    it("marks both models as mailbox-scoped data, so a mailbox's erasure removes them.", () => {
+    it("BookingProfileMongo falls back to class defaults when constructed with no data.", () => {
+        const obj = new BookingProfileMongo();
+
+        expect(obj.mailboxUid).toBe("");
+        expect(obj.avatarBlobKey).toBeUndefined();
+        expect(obj.avatarContentType).toBeUndefined();
+        expect(obj.bannerBlobKey).toBeUndefined();
+        expect(obj.bannerContentType).toBeUndefined();
+    });
+
+    it("BookingProfileMongo applies provided overrides when constructed with data.", () => {
+        const obj = new BookingProfileMongo({
+            uid: "ada@example.com",
+            mailboxUid: "ada@example.com",
+            avatarBlobKey: "booking-profiles/avatar/a",
+            avatarContentType: "image/png",
+            bannerBlobKey: "booking-profiles/banner/b",
+            bannerContentType: "image/webp",
+        });
+
+        expect(obj.uid).toBe("ada@example.com");
+        expect(obj.mailboxUid).toBe("ada@example.com");
+        expect(obj.avatarBlobKey).toBe("booking-profiles/avatar/a");
+        expect(obj.avatarContentType).toBe("image/png");
+        expect(obj.bannerBlobKey).toBe("booking-profiles/banner/b");
+        expect(obj.bannerContentType).toBe("image/webp");
+    });
+
+    it("BookingProfileMongo keeps class defaults for fields omitted from a partial constructor call, and honors an explicit clear.", () => {
+        const partial = new BookingProfileMongo({ mailboxUid: "ada@example.com", avatarBlobKey: "booking-profiles/avatar/a" });
+        expect(partial.avatarBlobKey).toBe("booking-profiles/avatar/a");
+        expect(partial.avatarContentType).toBeUndefined();
+        expect(partial.bannerBlobKey).toBeUndefined();
+
+        const empty = new BookingProfileMongo({});
+        expect(empty.mailboxUid).toBe("");
+        expect(empty.avatarBlobKey).toBeUndefined();
+
+        // Clearing an image writes an explicit null (or undefined), which must not fall back to a previous value.
+        const cleared = new BookingProfileMongo({ avatarBlobKey: null as any, bannerContentType: undefined });
+        expect(cleared.avatarBlobKey).toBeNull();
+        expect(cleared.bannerContentType).toBeUndefined();
+    });
+
+    it("marks all three models as mailbox-scoped data, so a mailbox's erasure removes them.", () => {
         expect(isMailboxScopedData(BookingTypeMongo)).toBe(true);
         expect(isMailboxScopedData(BookingMongo)).toBe(true);
+        expect(isMailboxScopedData(BookingProfileMongo)).toBe(true);
     });
 });

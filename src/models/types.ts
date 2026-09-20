@@ -66,10 +66,11 @@ export interface BookingType extends BaseEntity {
      * events are treated as busy time. */
     calendarFolderUid: string;
 
-    /** The globally unique, URL-safe public identifier for this booking type (the `intro-call` in
-     * `/bookings/intro-call`). Normalized to lowercase and collision-checked on create/update. Unlike `Domain`,
-     * whose `uid` *is* its name, this is an ordinary mutable indexed field - `RepoUtils.update()` requires
-     * `obj.uid === existing.uid`, so a uid-derived slug could never be renamed. */
+    /** The URL-safe public identifier for this booking type (the `intro-call` in `/book/jp@example.com/intro-call`).
+     * Normalized to lowercase and unique within its `mailboxUid` - two mailboxes may each have an `intro-call` -
+     * and collision-checked on create/update. Unlike `Domain`, whose `uid` *is* its name, this is an ordinary
+     * mutable indexed field - `RepoUtils.update()` requires `obj.uid === existing.uid`, so a uid-derived slug could
+     * never be renamed. */
     slug: string;
 
     /** The public-facing name of the offering, e.g. "30 Minute Intro Call". */
@@ -176,4 +177,32 @@ export interface Booking extends BaseEntity {
     manageToken: string;
 
     cancelledAt?: Date;
+}
+
+/**
+ * The look of a mailbox's public booking pages: the avatar and banner shown above every one of the mailbox's booking
+ * types. One row per mailbox, whose `uid` is the mailbox's own `uid` (its address) so it is found without a query and
+ * can never be duplicated.
+ *
+ * The images themselves live in the server's `BlobStore`, like `Branding`'s logo, and are served publicly - the pages
+ * are anonymous - by `BaseBookingProfileRoute`. Deleting the mailbox removes this row (it is `@MailboxScopedData()`),
+ * but the host has no hook to remove the blobs a plugin row points at, so they are left behind.
+ *
+ * @author Jean-Philippe Steinmetz
+ */
+export interface BookingProfile extends BaseEntity {
+    /** The unique identifier of the `Mailbox` this profile belongs to. Always equal to `uid`. */
+    mailboxUid: string;
+
+    /** The `BlobStore` key of the avatar image, if one has been uploaded. Route-managed, never client-set. */
+    avatarBlobKey?: string;
+
+    /** The media type the avatar was uploaded as. */
+    avatarContentType?: string;
+
+    /** The `BlobStore` key of the banner image, if one has been uploaded. Route-managed, never client-set. */
+    bannerBlobKey?: string;
+
+    /** The media type the banner was uploaded as. */
+    bannerContentType?: string;
 }

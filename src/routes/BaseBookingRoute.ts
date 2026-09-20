@@ -40,7 +40,8 @@ import {
     type OccurrenceWindow,
 } from "@rapidmx/restapi";
 import { generateCandidateSlots, normalizeSlug, subtractBusy } from "../util/BookingUtils.js";
-import { Booking, BookingStatus, BookingType } from "../models/types.js";
+import { Booking, BookingProfile, BookingStatus, BookingType } from "../models/types.js";
+import { profileImageVersion } from "./BaseBookingProfileRoute.js";
 const { Config, Inject, Logger } = ObjectDecorators;
 const { Description, Summary } = DocDecorators;
 const { Transactional } = DatabaseDecorators;
@@ -66,14 +67,16 @@ const MAX_BOOKER_TIMEZONE_LENGTH = 64;
  * by the booking type's own `bookingWindowDays`, which `generateCandidateSlots()` applies. */
 const DEFAULT_SLOT_WINDOW_DAYS = 30;
 
-/** At most this many slots are returned by one `GET /types/:slug/slots` call (earliest first). */
+/** At most this many slots are returned by one `GET /types/:mailboxUid/:slug/slots` call (earliest first). */
 export const MAX_SLOTS_PER_RESPONSE = 500;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-/** The public projection of a `BookingType` - deliberately omits `mailboxUid`/`calendarFolderUid`, which are
- * internal identifiers an anonymous caller has no business learning. */
+/** The public projection of a `BookingType` - deliberately omits `calendarFolderUid`, an internal identifier an
+ * anonymous caller has no business learning. `mailboxUid` is not one: it is the mailbox's address and is already part
+ * of every public booking link. */
 export interface PublicBookingType {
+    mailboxUid: string;
     slug: string;
     name: string;
     description?: string;
@@ -83,11 +86,17 @@ export interface PublicBookingType {
     requiresApproval: boolean;
     minimumNoticeMinutes: number;
     bookingWindowDays: number;
+    /** Changes whenever the mailbox's avatar does; unset when it has none. Serves as the cache-busting `v` of the
+     * avatar URL (`GET /api/mail/booking-profiles/:mailboxUid/avatar?v=...`). */
+    avatarVersion?: string;
+    /** Same as `avatarVersion`, for the banner. */
+    bannerVersion?: string;
 }
 
 /** The public projection of a `Booking`, as returned to the booker holding its `manageToken`. */
 export interface PublicBooking {
     uid: string;
+    mailboxUid: string;
     bookingTypeSlug: string;
     name: string;
     hostDisplayName: string;
@@ -100,6 +109,10 @@ export interface PublicBooking {
     status: BookingStatus;
     /** Only ever returned by `book()` itself, never by a later lookup - the booker already has it by then. */
     manageToken?: string;
+    /** See `PublicBookingType.avatarVersion`. */
+    avatarVersion?: string;
+    /** See `PublicBookingType.bannerVersion`. */
+    bannerVersion?: string;
 }
 
 /** The request body accepted by `book()`. */
@@ -141,6 +154,9 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+\.[^\s@]+$/;
  * additionally make `manage` a slug no host could ever use. A deployment that wants prettier public URLs can
  * rewrite them at its proxy.
  *
+ * A booking type is addressed by its mailbox as well as its slug (`/types/:mailboxUid/:slug`), since a slug is only
+ * unique within one mailbox.
+ *
  * ## Rate limiting
  *
  * `cancel()`/`reschedule()` carry `@RateLimit()`, which keys its primary counter on the method and the route with its
@@ -181,6 +197,7 @@ export abstract class BaseBookingRoute<
 > {
     protected abstract bookingTypeClass: any;
     protected abstract bookingClass: any;
+    protected abstract bookingProfileClass: any;
     protected abstract calendarEventClass: any;
     protected abstract folderClass: any;
     protected abstract mailboxClass: any;
@@ -190,6 +207,7 @@ export abstract class BaseBookingRoute<
 
     private bookingTypeRepo?: RepoUtils<BT>;
     private bookingRepo?: RepoUtils<B>;
+    private bookingProfileRepo?: RepoUtils<BookingProfile>;
     private calendarEventRepo?: RepoUtils<CE>;
     private folderRepo?: RepoUtils<F>;
     private mailboxRepo?: RepoUtils<M>;
@@ -235,6 +253,12 @@ export abstract class BaseBookingRoute<
                 args: [this.bookingClass],
             });
         }
+        if (!this.bookingProfileRepo) {
+            this.bookingProfileRepo = await this._objectFactory!.newInstance(RepoUtils, {
+                name: this.bookingProfileClass.name,
+                args: [this.bookingProfileClass],
+            });
+        }
         if (!this.calendarEventRepo) {
             this.calendarEventRepo = await this._objectFactory!.newInstance(RepoUtils, {
                 name: this.calendarEventClass.name,
@@ -255,19 +279,22 @@ export abstract class BaseBookingRoute<
         }
     }
 
-    /** Looks up an enabled booking type by its public slug. A disabled one is reported as a `404` rather than a
-     * `403`, so a paused link is indistinguishable from one that never existed. */
-    private async requireBookingType(slug: string): Promise<BT> {
+    /** Looks up an enabled booking type by its mailbox and public slug. A disabled one is reported as a `404` rather
+     * than a `403`, so a paused link is indistinguishable from one that never existed. */
+    private async requireBookingType(mailboxUid: string, slug: string): Promise<BT> {
+        // Mailbox uids are lowercased addresses, and slugs are normalized the same way `BaseBookingTypeRoute` stores them.
+        const mailbox: string = typeof mailboxUid === "string" ? mailboxUid.trim().toLowerCase() : "";
         const normalized: string = normalizeSlug(typeof slug === "string" ? slug : "");
-        // Validated before anything else (the rate limiter included): an empty slug can never name a booking type.
-        if (!normalized) {
+        // Validated before anything else (the rate limiter included): an empty mailbox or slug can never name a booking type.
+        if (!mailbox || !normalized) {
             throw new ApiError(ApiErrors.NOT_FOUND, 404, ApiErrorMessages.NOT_FOUND);
         }
-        const matches: BT[] = await this.bookingTypeRepo!.find({ slug: normalized } as any, {
+        // `literal()`: a mailbox uid is an address, so it must never be read as query syntax (`,()`).
+        const matches: BT[] = await this.bookingTypeRepo!.find({ mailboxUid: ModelUtils.literal(mailbox), slug: normalized } as any, {
             ignoreACL: true,
             limit: 1,
         });
-        if (matches.length === 0 || !matches[0].enabled || matches[0].slug !== normalized) {
+        if (matches.length === 0 || !matches[0].enabled || matches[0].slug !== normalized || matches[0].mailboxUid !== mailbox) {
             throw new ApiError(ApiErrors.NOT_FOUND, 404, ApiErrorMessages.NOT_FOUND);
         }
         return matches[0];
@@ -286,8 +313,15 @@ export abstract class BaseBookingRoute<
         return asEntity(this.bookingRepo!, matches[0]);
     }
 
-    private toPublicBookingType(bookingType: BT): PublicBookingType {
+    /** The cache-busting versions of the mailbox's avatar and banner - each unset when the mailbox has none. */
+    private async profileVersions(mailboxUid: string): Promise<{ avatarVersion?: string; bannerVersion?: string }> {
+        const profile: BookingProfile | undefined = await this.bookingProfileRepo!.findOne(mailboxUid, { ignoreACL: true });
+        return { avatarVersion: profileImageVersion(profile?.avatarBlobKey), bannerVersion: profileImageVersion(profile?.bannerBlobKey) };
+    }
+
+    private async toPublicBookingType(bookingType: BT): Promise<PublicBookingType> {
         return {
+            mailboxUid: bookingType.mailboxUid,
             slug: bookingType.slug,
             name: bookingType.name,
             description: bookingType.description,
@@ -297,12 +331,14 @@ export abstract class BaseBookingRoute<
             requiresApproval: bookingType.requiresApproval,
             minimumNoticeMinutes: bookingType.minimumNoticeMinutes,
             bookingWindowDays: bookingType.bookingWindowDays,
+            ...(await this.profileVersions(bookingType.mailboxUid)),
         };
     }
 
-    private toPublicBooking(booking: B, bookingType: BT, includeToken: boolean): PublicBooking {
+    private async toPublicBooking(booking: B, bookingType: BT, includeToken: boolean): Promise<PublicBooking> {
         return {
             uid: booking.uid,
+            mailboxUid: bookingType.mailboxUid,
             bookingTypeSlug: bookingType.slug,
             name: bookingType.name,
             hostDisplayName: bookingType.hostDisplayName,
@@ -314,6 +350,7 @@ export abstract class BaseBookingRoute<
             endDate: booking.endDate,
             status: booking.status,
             manageToken: includeToken ? booking.manageToken : undefined,
+            ...(await this.profileVersions(bookingType.mailboxUid)),
         };
     }
 
@@ -627,10 +664,10 @@ export abstract class BaseBookingRoute<
 
     @Summary("Retrieves the public details of a booking type.")
     @Description("Returns the publicly visible details of an enabled booking type. Requires no authentication.")
-    @Get("/types/:slug")
-    public async publicBookingType(@Param("slug") slug: string): Promise<PublicBookingType> {
+    @Get("/types/:mailboxUid/:slug")
+    public async publicBookingType(@Param("mailboxUid") mailboxUid: string, @Param("slug") slug: string): Promise<PublicBookingType> {
         await this.init();
-        return this.toPublicBookingType(await this.requireBookingType(slug));
+        return await this.toPublicBookingType(await this.requireBookingType(mailboxUid, slug));
     }
 
     @Summary("Lists the bookable slots for a booking type.")
@@ -638,18 +675,19 @@ export abstract class BaseBookingRoute<
         "Returns every slot the booking type's availability allows within the requested window that the host " +
             "is not already busy for. Requires no authentication.",
     )
-    @Get("/types/:slug/slots")
+    @Get("/types/:mailboxUid/:slug/slots")
     public async slots(
+        @Param("mailboxUid") mailboxUid: string,
         @Param("slug") slug: string,
         @Query("from") from: string | undefined,
         @Query("to") to: string | undefined,
         @Request req?: HttpRequest,
     ): Promise<OccurrenceWindow[]> {
         await this.init();
-        const bookingType: BT = await this.requireBookingType(slug);
+        const bookingType: BT = await this.requireBookingType(mailboxUid, slug);
         // Every call walks the availability configuration and pages the host's calendar - per source IP and booking
         // type, like `book()`, but on its own counter so browsing slots never uses up the visitor's booking attempts.
-        await this.checkBookingRateLimit("booking-slots", bookingType.slug, req);
+        await this.checkBookingRateLimit("booking-slots", bookingType, req);
 
         const now: Date = new Date();
         const windowStart: Date = from ? this.requireDate(from, "from") : now;
@@ -709,11 +747,11 @@ export abstract class BaseBookingRoute<
      * it and lock every legitimate booker out of that link. The rate limiter's own independent per-IP counter
      * still applies on top (`req` is passed through), bounding one source across every booking type.
      */
-    private async checkBookingRateLimit(counter: "booking" | "booking-slots", slug: string, req: HttpRequest | undefined): Promise<void> {
+    private async checkBookingRateLimit(counter: "booking" | "booking-slots", bookingType: BT, req: HttpRequest | undefined): Promise<void> {
         // An IPv6 client is counted by its /64 - see `rateLimitKeyForIp()`.
         const resolved: string | undefined = req ? this.clientAddress(req) : undefined;
         const address: string = resolved ? rateLimitKeyForIp(resolved) : "unknown";
-        await this.rateLimiter?.checkAndIncrement(`${counter}|${address}|${slug}`, undefined, req);
+        await this.rateLimiter?.checkAndIncrement(`${counter}|${address}|${bookingType.mailboxUid}|${bookingType.slug}`, undefined, req);
     }
 
     /** The anonymous caller's address for the limiter keys - `resolveClientIp()`, so `trusted_proxies` may hold CIDR
@@ -727,9 +765,10 @@ export abstract class BaseBookingRoute<
         "Books the requested slot, creating a real calendar event on the host's calendar and emailing the " +
             "booker a confirmation containing their manage link. Requires no authentication.",
     )
-    @Post("/types/:slug")
+    @Post("/types/:mailboxUid/:slug")
     @Validate("validateBook")
     public async book(
+        @Param("mailboxUid") mailboxUid: string,
         @Param("slug") slug: string,
         rawBody: BookingRequestBody | undefined,
         @Request req?: HttpRequest,
@@ -738,9 +777,9 @@ export abstract class BaseBookingRoute<
         const body: BookingRequestBody = rawBody!;
         await this.init();
         // The booking type is resolved first, so the limiter only ever holds counters for real, enabled booking types
-        // (keyed by the stored slug) - not one per arbitrary slug an anonymous caller makes up.
-        const bookingType: BT = await this.requireBookingType(slug);
-        await this.checkBookingRateLimit("booking", bookingType.slug, req);
+        // (keyed by the stored mailbox and slug) - not one per arbitrary link an anonymous caller makes up.
+        const bookingType: BT = await this.requireBookingType(mailboxUid, slug);
+        await this.checkBookingRateLimit("booking", bookingType, req);
         const start: Date = this.requireDate(body.start, "start");
         const slot: OccurrenceWindow = await this.requireAvailableSlot(bookingType, start, new Date());
 
@@ -764,7 +803,7 @@ export abstract class BaseBookingRoute<
             );
         }
 
-        return this.toPublicBooking(booking, bookingType, true);
+        return await this.toPublicBooking(booking, bookingType, true);
     }
 
     @Summary("Retrieves a booking by its manage token.")
@@ -777,7 +816,7 @@ export abstract class BaseBookingRoute<
         if (!bookingType) {
             throw new ApiError(ApiErrors.NOT_FOUND, 404, ApiErrorMessages.NOT_FOUND);
         }
-        return this.toPublicBooking(booking, bookingType, false);
+        return await this.toPublicBooking(booking, bookingType, false);
     }
 
     @Summary("Cancels a booking.")
@@ -817,7 +856,7 @@ export abstract class BaseBookingRoute<
                 { ignoreACL: true },
             );
         }
-        return this.toPublicBooking(updated, bookingType, false);
+        return await this.toPublicBooking(updated, bookingType, false);
     }
 
     @Summary("Reschedules a booking.")
@@ -870,7 +909,7 @@ export abstract class BaseBookingRoute<
                 moved,
                 { ignoreACL: true },
             );
-            return this.toPublicBooking(updated, bookingType, false);
+            return await this.toPublicBooking(updated, bookingType, false);
         }
 
         // The booking's event or host mailbox has been deleted out from under it - there is nothing coherent

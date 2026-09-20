@@ -7,6 +7,7 @@ import { isMailboxScopedData } from "@rapidmx/restapi";
 import { BookingStatus } from "../../src/models/types.js";
 import { BookingSQL } from "../../src/models/sql/BookingSQL.js";
 import { BookingTypeSQL } from "../../src/models/sql/BookingTypeSQL.js";
+import { BookingProfileSQL } from "../../src/models/sql/BookingProfileSQL.js";
 
 describe("SQL model default construction", () => {
     it("BookingTypeSQL falls back to class defaults when constructed with no data.", () => {
@@ -156,8 +157,53 @@ describe("SQL model default construction", () => {
         expect(obj.status).toBe(BookingStatus.CONFIRMED);
     });
 
-    it("marks both models as mailbox-scoped data, so a mailbox's erasure removes them.", () => {
+    it("BookingProfileSQL falls back to class defaults when constructed with no data.", () => {
+        const obj = new BookingProfileSQL();
+
+        expect(obj.mailboxUid).toBe("");
+        expect(obj.avatarBlobKey).toBeUndefined();
+        expect(obj.avatarContentType).toBeUndefined();
+        expect(obj.bannerBlobKey).toBeUndefined();
+        expect(obj.bannerContentType).toBeUndefined();
+    });
+
+    it("BookingProfileSQL applies provided overrides when constructed with data.", () => {
+        const obj = new BookingProfileSQL({
+            uid: "ada@example.com",
+            mailboxUid: "ada@example.com",
+            avatarBlobKey: "booking-profiles/avatar/a",
+            avatarContentType: "image/png",
+            bannerBlobKey: "booking-profiles/banner/b",
+            bannerContentType: "image/webp",
+        });
+
+        expect(obj.uid).toBe("ada@example.com");
+        expect(obj.mailboxUid).toBe("ada@example.com");
+        expect(obj.avatarBlobKey).toBe("booking-profiles/avatar/a");
+        expect(obj.avatarContentType).toBe("image/png");
+        expect(obj.bannerBlobKey).toBe("booking-profiles/banner/b");
+        expect(obj.bannerContentType).toBe("image/webp");
+    });
+
+    it("BookingProfileSQL keeps class defaults for fields omitted from a partial constructor call, and honors an explicit clear.", () => {
+        const partial = new BookingProfileSQL({ mailboxUid: "ada@example.com", avatarBlobKey: "booking-profiles/avatar/a" });
+        expect(partial.avatarBlobKey).toBe("booking-profiles/avatar/a");
+        expect(partial.avatarContentType).toBeUndefined();
+        expect(partial.bannerBlobKey).toBeUndefined();
+
+        const empty = new BookingProfileSQL({});
+        expect(empty.mailboxUid).toBe("");
+        expect(empty.avatarBlobKey).toBeUndefined();
+
+        // Clearing an image writes an explicit null (or undefined), which must not fall back to a previous value.
+        const cleared = new BookingProfileSQL({ avatarBlobKey: null as any, bannerContentType: undefined });
+        expect(cleared.avatarBlobKey).toBeNull();
+        expect(cleared.bannerContentType).toBeUndefined();
+    });
+
+    it("marks all three models as mailbox-scoped data, so a mailbox's erasure removes them.", () => {
         expect(isMailboxScopedData(BookingTypeSQL)).toBe(true);
         expect(isMailboxScopedData(BookingSQL)).toBe(true);
+        expect(isMailboxScopedData(BookingProfileSQL)).toBe(true);
     });
 });

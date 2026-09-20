@@ -21,22 +21,20 @@ import {
 import useBranding from "@rapidmx/react-shared/branding/useBranding.js";
 import Alert from "@rapidmx/react-shared/components/feedback/Alert.js";
 import Button from "@rapidmx/react-shared/components/buttons/Button.js";
-import { BrandingFooter, BrandingHeader } from "@rapidmx/web-client/shared/components/layout/BrandingChrome.js";
 import Modal from "@rapidmx/react-shared/components/overlays/Modal.js";
+import { BookingCard, BookingPageShell } from "../_BookingChrome.js";
 import { SlotCursor, appendSlots, fetchSlotPage, initialSlotCursor } from "../_slotPaging.js";
 
 export default function ManageBookingPage({ params }: { params: { token: string } }) {
-    const { branding, logoSrc } = useBranding();
+    const { branding } = useBranding();
     return (
-        <>
-            <BrandingHeader branding={branding} />
-            <ManageBookingContent token={params.token} logoSrc={logoSrc} />
-            <BrandingFooter branding={branding} />
-        </>
+        <BookingPageShell branding={branding}>
+            <ManageBookingContent token={params.token} />
+        </BookingPageShell>
     );
 }
 
-function ManageBookingContent({ token, logoSrc }: { token: string; logoSrc: string }) {
+function ManageBookingContent({ token }: { token: string }) {
     const [booking, setBooking] = useState<PublicBooking | null>(null);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
@@ -83,8 +81,8 @@ function ManageBookingContent({ token, logoSrc }: { token: string; logoSrc: stri
         setNextSlots(null);
         try {
             // Paged through the booking type's whole bookingWindowDays (see _slotPaging.ts).
-            const type = await getPublicBookingType(booking!.bookingTypeSlug);
-            const page = await fetchSlotPage(booking!.bookingTypeSlug, initialSlotCursor(type?.bookingWindowDays));
+            const type = await getPublicBookingType(booking!.mailboxUid, booking!.bookingTypeSlug);
+            const page = await fetchSlotPage(booking!.mailboxUid, booking!.bookingTypeSlug, initialSlotCursor(type?.bookingWindowDays));
             setSlots(page.slots);
             setNextSlots(page.next);
         } catch (err) {
@@ -99,7 +97,7 @@ function ManageBookingContent({ token, logoSrc }: { token: string; logoSrc: stri
         setLoadingMore(true);
         setActionError(null);
         try {
-            const page = await fetchSlotPage(booking!.bookingTypeSlug, cursor);
+            const page = await fetchSlotPage(booking!.mailboxUid, booking!.bookingTypeSlug, cursor);
             setSlots((current) => appendSlots(current, page.slots));
             setNextSlots(page.next);
         } catch (err) {
@@ -124,27 +122,38 @@ function ManageBookingContent({ token, logoSrc }: { token: string; logoSrc: stri
     }
 
     return (
-        <div className="min-h-screen bg-surface-alt flex flex-col items-center py-10 px-4">
-            <img src={logoSrc} width="64" height="64" alt="" className="mb-4" />
-            <div className="w-full max-w-lg bg-surface border border-border rounded-md p-6">
+        <>
+            <BookingCard
+                maxWidth="max-w-3xl"
+                host={
+                    booking
+                        ? {
+                              mailboxUid: booking.mailboxUid,
+                              name: booking.hostDisplayName,
+                              avatarVersion: booking.avatarVersion,
+                              bannerVersion: booking.bannerVersion,
+                          }
+                        : undefined
+                }
+            >
                 {loading ? (
-                    <p className="text-sm text-text-muted">Loading&hellip;</p>
+                    <p className="text-base text-text-muted">Loading&hellip;</p>
                 ) : loadError || !booking ? (
                     <Alert>{loadError ?? "Booking not found."}</Alert>
                 ) : (
                     <div className="flex flex-col gap-4">
                         <div>
-                            <h1 className="text-lg font-bold tracking-tight mb-1">{booking.name}</h1>
-                            <p className="text-sm text-text-muted">with {booking.hostDisplayName}</p>
+                            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{booking.hostDisplayName}</h1>
+                            <h2 className="text-lg sm:text-xl font-semibold mt-3">{booking.name}</h2>
                         </div>
 
                         {actionError && <Alert>{actionError}</Alert>}
 
                         {booking.status === BookingStatus.CANCELLED ? (
-                            <p className="text-sm font-medium text-text-muted">This booking has been cancelled.</p>
+                            <p className="text-base font-medium text-text-muted">This booking has been cancelled.</p>
                         ) : (
                             <>
-                                <p className="text-sm">
+                                <p className="text-lg">
                                     <strong>{new Date(booking.startDate).toLocaleString()}</strong>
                                 </p>
                                 {booking.status === BookingStatus.PENDING && (
@@ -167,11 +176,11 @@ function ManageBookingContent({ token, logoSrc }: { token: string; logoSrc: stri
                                     </div>
                                 ) : (
                                     <div>
-                                        <h2 className="text-sm font-semibold mb-2">Choose a new time</h2>
+                                        <h2 className="text-base font-semibold mb-2">Choose a new time</h2>
                                         {slotsLoading ? (
-                                            <p className="text-sm text-text-muted">Loading&hellip;</p>
+                                            <p className="text-base text-text-muted">Loading&hellip;</p>
                                         ) : slots.length === 0 ? (
-                                            <p className="text-sm text-text-muted">
+                                            <p className="text-base text-text-muted">
                                                 {nextSlots ? "No open times in the next few weeks." : "No open slots right now."}
                                             </p>
                                         ) : (
@@ -182,7 +191,7 @@ function ManageBookingContent({ token, logoSrc }: { token: string; logoSrc: stri
                                                         type="button"
                                                         disabled={submittingReschedule}
                                                         onClick={() => handleReschedule(slot)}
-                                                        className="text-sm py-1.5 px-3 border border-border rounded-sm hover:border-primary hover:text-primary-dark disabled:opacity-55"
+                                                        className="text-base py-2 px-3 border border-border rounded-md hover:border-primary hover:text-primary-dark disabled:opacity-55"
                                                     >
                                                         {new Date(slot.start).toLocaleString(undefined, {
                                                             month: "short",
@@ -221,7 +230,7 @@ function ManageBookingContent({ token, logoSrc }: { token: string; logoSrc: stri
                         )}
                     </div>
                 )}
-            </div>
+            </BookingCard>
 
             <Modal open={confirmingCancel} onClose={() => setConfirmingCancel(false)} title="Cancel booking">
                 <p className="text-sm mb-5">Are you sure you want to cancel this booking? This cannot be undone.</p>
@@ -246,6 +255,6 @@ function ManageBookingContent({ token, logoSrc }: { token: string; logoSrc: stri
                     </Button>
                 </div>
             </Modal>
-        </div>
+        </>
     );
 }

@@ -90,12 +90,26 @@ export function mockIntersectionObserver(): { trigger: (isIntersecting?: boolean
     };
 }
 
+/** The real `window.location` property, captured the first time `mockLocation()` replaces it. */
+let originalLocation: PropertyDescriptor | undefined;
+
+/**
+ * Puts back the real `window.location` that `mockLocation()` replaced, so a test that follows one which mocked it
+ * (in an `afterEach`) reads the pushState-driven location again instead of the stub. Does nothing if it was never mocked.
+ */
+export function restoreLocation(): void {
+    if (originalLocation) {
+        Object.defineProperty(window, "location", originalLocation);
+    }
+}
+
 /**
  * Replaces `window.location` with a plain, fully-writable stub so `window.location.href = "..."`,
  * `window.location.replace(...)`, and `window.location.reload()` can be asserted on directly — jsdom's
  * real `Location` either throws "Not implemented: navigation" or actually attempts to navigate when touched.
  */
 export function mockLocation(): { href: string; replace: ReturnType<typeof vi.fn>; reload: ReturnType<typeof vi.fn> } {
+    originalLocation ??= Object.getOwnPropertyDescriptor(window, "location");
     const location = { href: "", replace: vi.fn(), reload: vi.fn() };
     Object.defineProperty(window, "location", {
         configurable: true,

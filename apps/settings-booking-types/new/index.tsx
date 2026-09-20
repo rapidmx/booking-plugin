@@ -8,6 +8,7 @@ import { Folder, listFolders } from "@rapidmx/react-shared/mail/mailApi.js";
 import { BookingAvailabilityWindow, createBookingType } from "../../shared/bookingApi.js";
 import SettingsShell, { SettingsShellProps, useSettingsShell } from "@rapidmx/web-client/shared/components/settings/layout/SettingsShell.js";
 import AvailabilityEditor from "../../shared/components/AvailabilityEditor.js";
+import MailboxSelect from "../../shared/components/MailboxSelect.js";
 import Alert from "@rapidmx/react-shared/components/feedback/Alert.js";
 import Button from "@rapidmx/react-shared/components/buttons/Button.js";
 import FormField from "@rapidmx/react-shared/components/forms/FormField.js";
@@ -26,8 +27,10 @@ export default function NewBookingTypePage(props: NewBookingTypePageProps) {
 }
 
 function NewBookingTypeForm() {
-    const { mailboxUid, mailboxes } = useSettingsShell();
-    // Same established non-null pattern as `@rapidmx/web-client`'s new filter page.
+    const { mailboxUid: shellMailboxUid, mailboxes } = useSettingsShell();
+    // The link starts out for the mailbox Settings is showing, and can be given to any other one. Same established
+    // non-null pattern as `@rapidmx/web-client`'s new filter page.
+    const [mailboxUid, setMailboxUid] = useState<string>(shellMailboxUid!);
     const mailbox = mailboxes.find((mb) => mb.uid === mailboxUid)!;
 
     const [calendarFolderUid, setCalendarFolderUid] = useState<string | null>(null);
@@ -45,9 +48,16 @@ function NewBookingTypeForm() {
     const [error, setError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
 
+    // The calendar bookings are written into belongs to the chosen mailbox, so it is looked up again whenever that changes.
     useEffect(() => {
-        listFolders(mailboxUid!)
+        let cancelled = false;
+        setCalendarFolderUid(null);
+        setFolderError(null);
+        listFolders(mailboxUid)
             .then((folders) => {
+                if (cancelled) {
+                    return;
+                }
                 const calendar = folders.find((f: Folder) => f.type === "calendar");
                 if (!calendar) {
                     setFolderError("This mailbox has no Calendar folder yet.");
@@ -55,8 +65,27 @@ function NewBookingTypeForm() {
                 }
                 setCalendarFolderUid(calendar.uid);
             })
-            .catch((err) => setFolderError(err instanceof ApiRequestError ? err.message : "Could not load this mailbox's folders."));
+            .catch((err) => {
+                if (!cancelled) {
+                    setFolderError(err instanceof ApiRequestError ? err.message : "Could not load this mailbox's folders.");
+                }
+            });
+        return () => {
+            cancelled = true;
+        };
     }, [mailboxUid]);
+
+    /** Switches mailbox, taking the new mailbox's name and timezone along unless the user has already typed their own. */
+    function handleMailboxChange(nextUid: string) {
+        const next = mailboxes.find((mb) => mb.uid === nextUid)!;
+        if (hostDisplayName === mailbox.displayName) {
+            setHostDisplayName(next.displayName);
+        }
+        if (timezone === mailbox.timezone) {
+            setTimezone(next.timezone);
+        }
+        setMailboxUid(nextUid);
+    }
 
     async function handleSubmit(e: FormEvent) {
         e.preventDefault();
@@ -74,7 +103,7 @@ function NewBookingTypeForm() {
         setSaving(true);
         try {
             const created = await createBookingType({
-                mailboxUid: mailboxUid!,
+                mailboxUid,
                 calendarFolderUid,
                 slug: slug.trim(),
                 name: name.trim(),
@@ -87,7 +116,7 @@ function NewBookingTypeForm() {
                 bookingWindowDays,
                 requiresApproval,
             });
-            window.location.href = `/settings/booking-types/${encodeURIComponent(created.uid)}?mailboxUid=${encodeURIComponent(mailboxUid!)}`;
+            window.location.href = `/settings/booking-types/${encodeURIComponent(created.uid)}?mailboxUid=${encodeURIComponent(mailboxUid)}`;
         } catch (err) {
             setError(err instanceof ApiRequestError ? err.message : "Could not create this booking link.");
         } finally {
@@ -108,6 +137,9 @@ function NewBookingTypeForm() {
                 {folderError && <Alert>{folderError}</Alert>}
 
                 <form onSubmit={handleSubmit} className="flex flex-col gap-1">
+                    <FormField label="Mailbox" htmlFor="mailboxUid">
+                        <MailboxSelect id="mailboxUid" mailboxes={mailboxes} value={mailboxUid} onChange={handleMailboxChange} />
+                    </FormField>
                     <FormField label="Name" htmlFor="name">
                         <input
                             id="name"

@@ -6,3 +6,4 @@ export { CalendarEventMongo, FolderMongo, MailboxMongo } from "@rapidmx/restapi/
 // This plugin's own models.
 export { BookingTypeMongo } from "../../../src/models/mongo/BookingTypeMongo.js";
 export { BookingMongo } from "../../../src/models/mongo/BookingMongo.js";
+export { BookingProfileMongo } from "../../../src/models/mongo/BookingProfileMongo.js";

@@ -5,7 +5,8 @@
 // Test doubles for the pluggable interfaces this plugin's routes inject, registered with an `ObjectFactory` under the
 // same names `@Inject("...")` resolves. Every integration test that boots the `test/server-mongo`/`test/server-sql`
 // fixture apps registers these before `server.start()`, because `Server` instantiates every route it discovers.
-import type { MailTransport, OutboundMessage, TransportResult } from "@rapidmx/restapi";
+import { Readable } from "stream";
+import type { BlobPutOptions, BlobRange, BlobStore, MailTransport, OutboundMessage, TransportResult } from "@rapidmx/restapi";
 import type { ObjectFactory } from "@rapidrest/service-core";
 
 /**
@@ -27,9 +28,53 @@ export class RecordingMailTransport implements MailTransport {
 }
 
 /**
+ * A `BlobStore` that keeps every blob in memory, with the media type it was stored under. `failNextDelete` makes the next
+ * `delete()` throw, so a test can prove a failed cleanup never fails the request that triggered it.
+ */
+export class InMemoryBlobStore implements BlobStore {
+    public readonly blobs: Map<string, { data: Buffer; contentType?: string }> = new Map();
+    public failNextDelete: boolean = false;
+
+    public async put(key: string, data: Buffer | NodeJS.ReadableStream, options?: BlobPutOptions): Promise<void> {
+        const buffer: Buffer = Buffer.isBuffer(data) ? data : Buffer.concat(await Readable.from(data as any).toArray());
+        this.blobs.set(key, { data: buffer, contentType: options?.contentType });
+    }
+
+    public async get(key: string): Promise<Buffer> {
+        const blob = this.blobs.get(key);
+        if (!blob) {
+            throw new Error(`No blob at ${key}`);
+        }
+        return blob.data;
+    }
+
+    public async getStream(key: string, range?: BlobRange): Promise<NodeJS.ReadableStream> {
+        const data: Buffer = await this.get(key);
+        return Readable.from(range ? data.subarray(range.start, range.end === undefined ? undefined : range.end + 1) : data);
+    }
+
+    public async delete(key: string): Promise<void> {
+        if (this.failNextDelete) {
+            this.failNextDelete = false;
+            throw new Error("delete failed");
+        }
+        this.blobs.delete(key);
+    }
+
+    public async exists(key: string): Promise<boolean> {
+        return this.blobs.has(key);
+    }
+
+    public async size(key: string): Promise<number> {
+        return (await this.get(key)).length;
+    }
+}
+
+/**
  * Registers the test doubles against `objectFactory`. Call this before `server.start()` in any integration test that
  * boots the fixture apps.
  */
 export function registerTestDoubles(objectFactory: ObjectFactory): void {
     objectFactory.register(RecordingMailTransport, "MailTransport");
+    objectFactory.register(InMemoryBlobStore, "BlobStore");
 }

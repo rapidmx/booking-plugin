@@ -4,15 +4,18 @@
 ///////////////////////////////////////////////////////////////////////////////
 import React, { FormEvent, useEffect, useState } from "react";
 import { ApiRequestError } from "@rapidmx/react-shared/util/api.js";
+import { Folder, listFolders } from "@rapidmx/react-shared/mail/mailApi.js";
 import {
     BookingAvailabilityWindow,
     BookingType,
+    bookingPublicUrl,
     deleteBookingType,
     getBookingType,
     updateBookingType,
 } from "../shared/bookingApi.js";
 import SettingsShell, { SettingsShellProps, useSettingsShell } from "@rapidmx/web-client/shared/components/settings/layout/SettingsShell.js";
 import AvailabilityEditor from "../shared/components/AvailabilityEditor.js";
+import MailboxSelect from "../shared/components/MailboxSelect.js";
 import Alert from "@rapidmx/react-shared/components/feedback/Alert.js";
 import Button from "@rapidmx/react-shared/components/buttons/Button.js";
 import FormField from "@rapidmx/react-shared/components/forms/FormField.js";
@@ -32,8 +35,10 @@ export default function BookingTypeDetailPage(props: BookingTypeDetailPageProps)
 }
 
 function BookingTypeDetailContent({ uid }: { uid: string }) {
-    const { mailboxUid } = useSettingsShell();
+    const { mailboxUid, mailboxes } = useSettingsShell();
     const [bookingType, setBookingType] = useState<BookingType | null>(null);
+    // The mailbox the link belongs to, as chosen in the form - the saved one is `bookingType.mailboxUid`.
+    const [selectedMailboxUid, setSelectedMailboxUid] = useState("");
     const [name, setName] = useState("");
     const [description, setDescription] = useState("");
     const [hostDisplayName, setHostDisplayName] = useState("");
@@ -62,6 +67,7 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
         getBookingType(uid)
             .then((bt) => {
                 setBookingType(bt);
+                setSelectedMailboxUid(bt.mailboxUid);
                 setName(bt.name);
                 setDescription(bt.description ?? "");
                 setHostDisplayName(bt.hostDisplayName);
@@ -83,9 +89,20 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
         setSaved(false);
         setSaving(true);
         try {
+            // Moving the link to another mailbox also moves it to that mailbox's calendar, where its bookings are written.
+            let move: { mailboxUid: string; calendarFolderUid: string } | undefined;
+            if (selectedMailboxUid !== bookingType!.mailboxUid) {
+                const calendar = (await listFolders(selectedMailboxUid)).find((f: Folder) => f.type === "calendar");
+                if (!calendar) {
+                    setSaveError("That mailbox has no Calendar folder yet.");
+                    return;
+                }
+                move = { mailboxUid: selectedMailboxUid, calendarFolderUid: calendar.uid };
+            }
             const updated = await updateBookingType({
                 uid: bookingType!.uid,
                 version: bookingType!.version,
+                ...move,
                 name,
                 // `null` (not omitted) clears a saved description - an omitted field is left unchanged by the
                 // server's partial update. `UpdateBookingTypeInput` doesn't declare `null` yet, hence the cast.
@@ -99,6 +116,11 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
                 requiresApproval,
                 enabled,
             });
+            if (move) {
+                // Settings is showing the old mailbox; reopen the link under the new one.
+                window.location.href = `/settings/booking-types/${encodeURIComponent(updated.uid)}?mailboxUid=${encodeURIComponent(move.mailboxUid)}`;
+                return;
+            }
             setBookingType(updated);
             setSaved(true);
         } catch (err) {
@@ -150,7 +172,7 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
     // `bookingType` only ever becomes non-null via the client-only fetch above, so by the time this line
     // runs `window` is always defined — the `!bookingType` early return just above covers every real SSR
     // pass, where `bookingType` is still `null`.
-    const publicUrl = `${window.location.origin}/book/${encodeURIComponent(bookingType.slug)}`;
+    const publicUrl = bookingPublicUrl(bookingType.mailboxUid, bookingType.slug);
 
     return (
         <div className="flex-1 min-w-0 overflow-y-auto p-6">
@@ -192,6 +214,9 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
                         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
                         Enabled (publicly bookable)
                     </label>
+                    <FormField label="Mailbox" htmlFor="mailboxUid">
+                        <MailboxSelect id="mailboxUid" mailboxes={mailboxes} value={selectedMailboxUid} onChange={setSelectedMailboxUid} />
+                    </FormField>
                     <FormField label="Name" htmlFor="name">
                         <input id="name" type="text" className={INPUT_CLASS} value={name} onChange={(e) => setName(e.target.value)} />
                     </FormField>

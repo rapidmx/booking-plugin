@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
 /**
- * Pages through a booking type's open slots. `BaseBookingRoute`'s `GET /types/:slug/slots` answers one window at a
+ * Pages through a booking type's open slots. `BaseBookingRoute`'s `GET /types/:mailboxUid/:slug/slots` answers one window at a
  * time (30 days when no `to` is given) and returns at most `MAX_SLOTS_PER_RESPONSE` slots, earliest first, so a single
  * unparameterized call hides everything past the first 30 days - or, for a busy host with short slots, past the first
  * 500 slots - of a longer `bookingWindowDays`. Not a page: `_`-prefixed files in `apps/` aren't routed.
@@ -46,14 +46,14 @@ export function initialSlotCursor(bookingWindowDays: number | undefined, now: nu
  * `MAX_REQUESTS_PER_PAGE` requests - so a page can be empty while `next` is still set. A cut-off response continues just
  * after its last slot.
  */
-export async function fetchSlotPage(slug: string, cursor: SlotCursor): Promise<SlotPage> {
+export async function fetchSlotPage(mailboxUid: string, slug: string, cursor: SlotCursor): Promise<SlotPage> {
     let from: number = cursor.from;
     for (let request = 1; ; request++) {
         if (from >= cursor.horizon) {
             return { slots: [], next: null };
         }
         const to: number = from + SLOT_CHUNK_DAYS * MS_PER_DAY;
-        const slots: BookingSlot[] = await getBookingSlots(slug, new Date(from).toISOString(), new Date(to).toISOString());
+        const slots: BookingSlot[] = await getBookingSlots(mailboxUid, slug, new Date(from).toISOString(), new Date(to).toISOString());
         let nextFrom: number = to;
         if (slots.length >= MAX_SLOTS_PER_RESPONSE) {
             const lastStart: number = new Date(slots[slots.length - 1].start).getTime();

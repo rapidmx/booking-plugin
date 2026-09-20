@@ -3,10 +3,19 @@
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
 import { ApiError, type JWTUser } from "@rapidrest/core";
-import { ACLAction, ApiErrorMessages, ApiErrors, HttpRequest, RepoUtils, RouteDecorators, type UpdateObject } from "@rapidrest/service-core";
+import {
+    ACLAction,
+    ApiErrorMessages,
+    ApiErrors,
+    HttpRequest,
+    ModelUtils,
+    RepoUtils,
+    RouteDecorators,
+    type UpdateObject,
+} from "@rapidrest/service-core";
 import { BaseScopedChildRoute, Folder, FolderType } from "@rapidmx/restapi";
 import { normalizeSlug, validateAvailability } from "../util/BookingUtils.js";
-import { BookingType } from "../models/types.js";
+import { Booking, BookingType } from "../models/types.js";
 const { Param, Request, User: AuthUser } = RouteDecorators;
 
 /**
@@ -16,9 +25,13 @@ const { Param, Request, User: AuthUser } = RouteDecorators;
  * `BaseBookingRoute`, a deliberately separate class exposing no CRUD at all.
  *
  * `create()`/`update()` add exactly two things on top of the inherited behavior: `slug` is normalized and
- * collision-checked (a `409`, mirroring `BaseDomainRoute.assignUidAndCheckCollision()`), and the availability
- * configuration is validated (a `400`) so an unbookable or non-expandable configuration can't be persisted and
- * then silently produce zero slots forever.
+ * collision-checked within its mailbox (a `409`, mirroring `BaseDomainRoute.assignUidAndCheckCollision()`), and the
+ * availability configuration is validated (a `400`) so an unbookable or non-expandable configuration can't be
+ * persisted and then silently produce zero slots forever.
+ *
+ * A booking type may be moved to another mailbox (`update()` with a new `mailboxUid`) only while it has no bookings:
+ * each booking's calendar event lives in the old mailbox's calendar and its manage link resolves that mailbox, so a
+ * move would strand them.
  *
  * Unlike `Domain`, whose `uid` *is* its normalized name, `slug` here is an ordinary mutable indexed field. That
  * is deliberate: `RepoUtils.update()` requires `obj.uid === existing.uid` (an identity match, not a rename), so
@@ -34,22 +47,49 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
      * `calendarFolderUid` (see `requireBookableFolder()`). */
     protected abstract folderClass: any;
 
-    private folderRepo?: RepoUtils<Folder>;
+    /** The concrete `Booking` entity class, supplied by the Mongo/SQL concrete subclass - used to refuse moving a
+     * booking type that has bookings to another mailbox (see `requireNoBookings()`). */
+    protected abstract bookingClass: any;
 
-    /**
-     * Normalizes `o.slug` in place and rejects a `409` if another `BookingType` already holds it. `excludeUid`
-     * is the row being updated, if any - a booking type never collides with itself.
-     */
-    private async normalizeAndCheckSlug(o: Partial<T>, excludeUid?: string): Promise<void> {
+    private folderRepo?: RepoUtils<Folder>;
+    private bookingRepo?: RepoUtils<Booking>;
+
+    /** Normalizes `o.slug` in place, rejecting a `400` if nothing usable is left of it. */
+    private normalizeSlugOf(o: Partial<T>): string {
         const slug: string = normalizeSlug(o.slug ?? "");
         if (!slug) {
             throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "slug is required and must contain at least one letter or digit.");
         }
         (o as any).slug = slug;
+        return slug;
+    }
 
-        const existing: T[] = await this.repoUtils!.find({ slug } as any, { ignoreACL: true, limit: 1 });
+    /**
+     * Rejects a `409` if another `BookingType` of `mailboxUid` already holds `slug` - slugs are only unique within
+     * a mailbox. `excludeUid` is the row being updated, if any - a booking type never collides with itself.
+     */
+    private async requireSlugFree(slug: string, mailboxUid: unknown, excludeUid?: string): Promise<void> {
+        // `literal()`: a mailbox uid is an address, so it must never be read as query syntax (`,()`).
+        const existing: T[] = await this.repoUtils!.find({ mailboxUid: ModelUtils.literal(String(mailboxUid ?? "")), slug } as any, {
+            ignoreACL: true,
+            limit: 1,
+        });
         if (existing.length > 0 && existing[0].uid !== excludeUid) {
             throw new ApiError(ApiErrors.IDENTIFIER_EXISTS, 409, "This booking slug is already in use.");
+        }
+    }
+
+    /** Rejects a `409` when the booking type `uid` has any booking, cancelled ones included. */
+    private async requireNoBookings(uid: string): Promise<void> {
+        if (!this.bookingRepo) {
+            this.bookingRepo = await this._objectFactory!.newInstance(RepoUtils, { name: this.bookingClass.name, args: [this.bookingClass] });
+        }
+        if ((await this.bookingRepo.count({ bookingTypeUid: ModelUtils.literal(uid) } as any, { ignoreACL: true })) > 0) {
+            throw new ApiError(
+                ApiErrors.IDENTIFIER_EXISTS,
+                409,
+                "This booking link already has bookings, so it cannot be moved to another mailbox. Create a new link for that mailbox instead.",
+            );
         }
     }
 
@@ -91,11 +131,13 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
         for (const single of objs) {
             this.requireValidAvailability(single);
             await this.requireBookableFolder(single?.mailboxUid, single?.calendarFolderUid, user);
-            await this.normalizeAndCheckSlug(single);
-            if (seenSlugs.has(single.slug)) {
+            await this.requireSlugFree(this.normalizeSlugOf(single), single.mailboxUid);
+            // Slugs only collide within one mailbox, so the same slug for two mailboxes in one request is fine.
+            const seenKey: string = `${single.mailboxUid}\n${single.slug}`;
+            if (seenSlugs.has(seenKey)) {
                 throw new ApiError(ApiErrors.IDENTIFIER_EXISTS, 409, "Duplicate booking slug within the same request.");
             }
-            seenSlugs.add(single.slug);
+            seenSlugs.add(seenKey);
         }
         return await super.create(obj, req, user);
     }
@@ -109,20 +151,28 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
         // Validate/normalize only what the caller actually sent - `RepoUtils.update()` is a genuine partial
         // patch on both backends, so an absent `slug`/`availability` means "leave it alone", not "clear it".
         this.requireValidAvailability(obj);
-        if ((obj as any).slug !== undefined) {
-            await this.normalizeAndCheckSlug(obj, id);
+        const slugSent: boolean = (obj as any).slug !== undefined;
+        if (slugSent) {
+            this.normalizeSlugOf(obj);
         }
-        // Re-checked whenever either half of the folder/mailbox pairing changes. `super.update()` still does its
-        // own permission checks (UPDATE on the current mailbox, CREATE on a new one) afterwards, and a missing row
-        // is its 404 to report.
-        if ((obj as any).calendarFolderUid !== undefined || (obj as any).mailboxUid !== undefined) {
+        const mailboxSent: boolean = (obj as any).mailboxUid !== undefined;
+        // `super.update()` still does its own permission checks (UPDATE on the current mailbox, CREATE on a new one)
+        // afterwards, and a missing row is its 404 to report - so nothing here applies to one.
+        if (slugSent || mailboxSent || (obj as any).calendarFolderUid !== undefined) {
             const existing: T | undefined = await this.repoUtils!.findOne(id, { ignoreACL: true });
             if (existing) {
-                await this.requireBookableFolder(
-                    (obj as any).mailboxUid ?? existing.mailboxUid,
-                    (obj as any).calendarFolderUid ?? existing.calendarFolderUid,
-                    user,
-                );
+                const mailboxUid: unknown = (obj as any).mailboxUid ?? existing.mailboxUid;
+                // Re-checked whenever either half of the folder/mailbox pairing changes.
+                if ((obj as any).calendarFolderUid !== undefined || mailboxSent) {
+                    await this.requireBookableFolder(mailboxUid, (obj as any).calendarFolderUid ?? existing.calendarFolderUid, user);
+                }
+                if (mailboxSent && mailboxUid !== existing.mailboxUid) {
+                    await this.requireNoBookings(id);
+                }
+                // The slug must be free in the mailbox the booking type ends up in, whichever of the two changed.
+                if (slugSent || mailboxSent) {
+                    await this.requireSlugFree((obj as any).slug ?? existing.slug, mailboxUid, id);
+                }
             }
         }
         return await super.update(id, obj, req, user);

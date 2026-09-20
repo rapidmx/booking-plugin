@@ -43,9 +43,9 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
         bookerNotes: "Looking forward to it.",
         bookerTimezone: "America/Chicago",
     });
-    const book = (slug: string, body: any) => request(ctx.app()).post(`${ctx.baseUrl}/types/${slug}`).send(body);
+    const book = (slug: string, body: any) => request(ctx.app()).post(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${slug}`).send(body);
     const slotStarts = async (slug: string): Promise<string[]> =>
-        (await request(ctx.app()).get(`${ctx.baseUrl}/types/${slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`)).body.map((slot: any) => slot.start);
+        (await request(ctx.app()).get(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`)).body.map((slot: any) => slot.start);
 
     describe("manage token", () => {
         it("never resolves a query operator in place of a token, so another booker's booking can't be read or cancelled", async () => {
@@ -195,7 +195,7 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
             const checkSpy = vi.spyOn(rateLimiter, "checkAndIncrement");
             try {
                 const bookingType = await ctx.createBookingType();
-                const slots = () => request(ctx.app()).get(`${ctx.baseUrl}/types/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`);
+                const slots = () => request(ctx.app()).get(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`);
 
                 expect((await slots()).status).toBe(200);
                 expect((await slots()).status).toBe(200);
@@ -205,7 +205,7 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
 
                 // A slug naming no booking type is a 404 without ever reaching the limiter.
                 checkSpy.mockClear();
-                expect((await request(ctx.app()).get(`${ctx.baseUrl}/types/no-such-type-${Date.now()}/slots`)).status).toBe(404);
+                expect((await request(ctx.app()).get(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/no-such-type-${Date.now()}/slots`)).status).toBe(404);
                 expect((await book(`no-such-type-${Date.now()}`, validBooking(SLOT_1))).status).toBe(404);
                 expect((await book("---", validBooking(SLOT_1))).status).toBe(404);
                 expect(checkSpy).not.toHaveBeenCalled();
@@ -223,7 +223,7 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
             try {
                 const bookingType = await ctx.createBookingType();
                 const slots = (forwardedFor: string) =>
-                    request(ctx.app()).get(`${ctx.baseUrl}/types/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`).set("X-Forwarded-For", forwardedFor);
+                    request(ctx.app()).get(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`).set("X-Forwarded-For", forwardedFor);
 
                 expect((await slots("198.51.100.1")).status).toBe(200);
                 expect((await slots("198.51.100.2")).status).toBe(429);
@@ -240,7 +240,7 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
             const spy = vi.spyOn(BaseBookingRoute.prototype as any, "clientAddress").mockImplementation(() => address);
             try {
                 const bookingType = await ctx.createBookingType();
-                const slots = () => request(ctx.app()).get(`${ctx.baseUrl}/types/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`);
+                const slots = () => request(ctx.app()).get(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`);
 
                 expect((await slots()).status).toBe(200);
                 address = "2001:db8:1:2:ffff:abcd:1234:5678";
@@ -270,7 +270,7 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
             });
 
             const result = await request(ctx.app()).get(
-                `${ctx.baseUrl}/types/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=2099-06-04T00:00:00.000Z`,
+                `${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=2099-06-04T00:00:00.000Z`,
             );
 
             expect(result.status).toBe(200);

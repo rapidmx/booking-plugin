@@ -8,11 +8,11 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import PublicBookingPage from "../../../apps/book/[slug].js";
+import PublicBookingPage from "../../../../apps/book/[mailboxUid]/[slug].js";
 
 describe("PublicBookingPage SSR guard (no window)", () => {
     it("renders without throwing when there is no window global", () => {
         expect(typeof window).toBe("undefined");
-        expect(() => renderToStaticMarkup(<PublicBookingPage params={{ slug: "intro-call" }} />)).not.toThrow();
+        expect(() => renderToStaticMarkup(<PublicBookingPage params={{ mailboxUid: "jane@example.com", slug: "intro-call" }} />)).not.toThrow();
     });
 });

@@ -13,16 +13,23 @@ and resource booking (a resource mailbox's auto-accept and booking window) is un
 
 ## What it adds
 
-- **API**, at the same paths as before:
+- **API**:
   - `/api/mail/booking-types`: the owner's booking types, permission-checked against the owning mailbox like any other
-    mailbox-scoped entity. Slugs are unique, and the calendar folder must be a calendar of the same mailbox that the
-    caller can read.
-  - `/api/mail/bookings`: the anonymous half. `GET /types/:slug` and `GET /types/:slug/slots` show a booking type and its
-    open slots, `POST /types/:slug` books a slot, and `GET /manage/:token` with `POST /manage/:token/cancel` and
-    `POST /manage/:token/reschedule` manage a booking. Every write is rate limited.
-- **Public booking pages** at `/book/:slug` and `/book/manage/:token` (the `book` app, on the server's public host).
+    mailbox-scoped entity. A slug is unique within its mailbox, and the calendar folder must be a calendar of the same
+    mailbox that the caller can read. A booking type can be moved to another mailbox until it has its first booking.
+  - `/api/mail/booking-profiles`: the avatar and banner shown on a mailbox's booking pages. `POST` and `DELETE`
+    `/:mailboxUid/avatar` and `/:mailboxUid/banner` need update permission on the mailbox (the image is the raw request
+    body, PNG, JPEG, GIF or WebP, up to 2 MiB for an avatar and 5 MiB for a banner, kept in the server's blob store);
+    `GET /:mailboxUid` needs read permission; `GET` of an image is public.
+  - `/api/mail/bookings`: the anonymous half. `GET /types/:mailboxUid/:slug` and `GET /types/:mailboxUid/:slug/slots`
+    show a booking type and its open slots, `POST /types/:mailboxUid/:slug` books a slot, and `GET /manage/:token` with
+    `POST /manage/:token/cancel` and `POST /manage/:token/reschedule` manage a booking. Every write is rate limited.
+- **Public booking pages** at `/book/:mailboxUid/:slug` (for example `/book/jp@example.com/intro-call`) and
+  `/book/manage/:token` (the `book` app, on the server's public host). A page shows the host's name, avatar and banner,
+  the booking type, and the open times.
 - **Settings → Booking Links** at `/settings/booking-types` (the `booking-types` app, on the webmail host), listed in the
-  Settings sidebar.
+  Settings sidebar: each link can be copied from the list, belongs to a mailbox chosen in the form, and the page sets the
+  mailbox's booking page avatar and banner.
 
 ## Install
 

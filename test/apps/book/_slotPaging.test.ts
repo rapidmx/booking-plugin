@@ -43,7 +43,7 @@ describe("_slotPaging", () => {
 
     it("asks for one chunk, and continues from its end while the window lasts", async () => {
         const requested = mockSlots([[slotAt(NOW + DAY)]]);
-        const page = await fetchSlotPage("intro-call", initialSlotCursor(90, NOW));
+        const page = await fetchSlotPage("jane@example.com", "intro-call", initialSlotCursor(90, NOW));
 
         expect(requested).toEqual([{ from: NOW, to: NOW + SLOT_CHUNK_DAYS * DAY }]);
         expect(page.slots).toHaveLength(1);
@@ -52,14 +52,14 @@ describe("_slotPaging", () => {
 
     it("ends once a chunk reaches the horizon", async () => {
         mockSlots([[slotAt(NOW + DAY)]]);
-        const page = await fetchSlotPage("intro-call", initialSlotCursor(30, NOW));
+        const page = await fetchSlotPage("jane@example.com", "intro-call", initialSlotCursor(30, NOW));
         expect(page.next).toBeNull();
     });
 
     it("skips a fully booked chunk until it finds a slot", async () => {
         const later = slotAt(NOW + 35 * DAY);
         const requested = mockSlots([[], [later]]);
-        const page = await fetchSlotPage("intro-call", initialSlotCursor(120, NOW));
+        const page = await fetchSlotPage("jane@example.com", "intro-call", initialSlotCursor(120, NOW));
 
         expect(requested.map((r) => r.from)).toEqual([NOW, NOW + 30 * DAY]);
         expect(page.slots).toEqual([later]);
@@ -72,18 +72,18 @@ describe("_slotPaging", () => {
         const later = slotAt(NOW + 65 * DAY);
         const requested = mockSlots([[], [], [later]]);
 
-        const first = await fetchSlotPage("intro-call", initialSlotCursor(365, NOW));
+        const first = await fetchSlotPage("jane@example.com", "intro-call", initialSlotCursor(365, NOW));
         expect(requested).toHaveLength(2);
         expect(first).toEqual({ slots: [], next: { from: NOW + 60 * DAY, horizon: NOW + 365 * DAY } });
 
-        const second = await fetchSlotPage("intro-call", first.next!);
+        const second = await fetchSlotPage("jane@example.com", "intro-call", first.next!);
         expect(requested.map((r) => r.from)).toEqual([NOW, NOW + 30 * DAY, NOW + 60 * DAY]);
         expect(second.slots).toEqual([later]);
     });
 
     it("returns an empty, final page when nothing is open in the rest of the window", async () => {
         const requested = mockSlots([[], []]);
-        const page = await fetchSlotPage("intro-call", initialSlotCursor(60, NOW));
+        const page = await fetchSlotPage("jane@example.com", "intro-call", initialSlotCursor(60, NOW));
         expect(requested).toHaveLength(2);
         expect(page).toEqual({ slots: [], next: null });
     });
@@ -91,7 +91,7 @@ describe("_slotPaging", () => {
     it("continues just after the last slot of a response restapi cut off", async () => {
         const full = Array.from({ length: MAX_SLOTS_PER_RESPONSE }, (_v, i) => slotAt(NOW + i * 60 * 60 * 1000));
         mockSlots([full]);
-        const page = await fetchSlotPage("intro-call", initialSlotCursor(30, NOW));
+        const page = await fetchSlotPage("jane@example.com", "intro-call", initialSlotCursor(30, NOW));
 
         const lastStart = Date.parse(full[full.length - 1].start);
         expect(page.next).toEqual({ from: lastStart + 1, horizon: NOW + 30 * DAY });
@@ -103,8 +103,8 @@ describe("_slotPaging", () => {
         const rest = slotAt(lastStart + 15 * 60 * 1000);
         const requested = mockSlots([full, [rest]]);
 
-        const first = await fetchSlotPage("intro-call", initialSlotCursor(30, NOW));
-        const second = await fetchSlotPage("intro-call", first.next!);
+        const first = await fetchSlotPage("jane@example.com", "intro-call", initialSlotCursor(30, NOW));
+        const second = await fetchSlotPage("jane@example.com", "intro-call", first.next!);
 
         expect(requested[1]).toEqual({ from: lastStart + 1, to: lastStart + 1 + SLOT_CHUNK_DAYS * DAY });
         expect(second.slots).toEqual([rest]);
@@ -119,7 +119,7 @@ describe("_slotPaging", () => {
         full[full.length - 1] = slotAt(horizon);
         mockSlots([full]);
 
-        const page = await fetchSlotPage("intro-call", initialSlotCursor(1, NOW));
+        const page = await fetchSlotPage("jane@example.com", "intro-call", initialSlotCursor(1, NOW));
         expect(page.slots).toHaveLength(MAX_SLOTS_PER_RESPONSE);
         expect(page.next).toBeNull();
     });
@@ -130,13 +130,13 @@ describe("_slotPaging", () => {
         const full = Array.from({ length: MAX_SLOTS_PER_RESPONSE }, () => slotAt(NOW - DAY));
         mockSlots([full]);
 
-        const page = await fetchSlotPage("intro-call", initialSlotCursor(90, NOW));
+        const page = await fetchSlotPage("jane@example.com", "intro-call", initialSlotCursor(90, NOW));
         expect(page.next).toEqual({ from: NOW + SLOT_CHUNK_DAYS * DAY, horizon: NOW + 90 * DAY });
     });
 
     it("never requests past bookingWindowDays when every chunk is fully booked", async () => {
         const requested = mockSlots([[], [], [], []]);
-        const page = await fetchSlotPage("intro-call", initialSlotCursor(45, NOW));
+        const page = await fetchSlotPage("jane@example.com", "intro-call", initialSlotCursor(45, NOW));
 
         // 45 days = one full chunk plus a partial one; nothing is asked for from the horizon onward.
         expect(requested.map((r) => r.from)).toEqual([NOW, NOW + 30 * DAY]);
@@ -146,7 +146,7 @@ describe("_slotPaging", () => {
 
     it("returns an empty, final page without fetching for a cursor already at its horizon", async () => {
         const requested = mockSlots([[slotAt(NOW)]]);
-        const page = await fetchSlotPage("intro-call", { from: NOW + 30 * DAY, horizon: NOW + 30 * DAY });
+        const page = await fetchSlotPage("jane@example.com", "intro-call", { from: NOW + 30 * DAY, horizon: NOW + 30 * DAY });
 
         expect(requested).toHaveLength(0);
         expect(page).toEqual({ slots: [], next: null });

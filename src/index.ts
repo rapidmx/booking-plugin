@@ -15,3 +15,4 @@ export * from "./models/types.js";
 export * from "./util/BookingUtils.js";
 export * from "./routes/BaseBookingRoute.js";
 export * from "./routes/BaseBookingTypeRoute.js";
+export * from "./routes/BaseBookingProfileRoute.js";

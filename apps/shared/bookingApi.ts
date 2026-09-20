@@ -7,15 +7,15 @@
  * mounted at `/mail/booking-types`/`/mail/bookings` (see `BaseBookingTypeRoute`/`BaseBookingRoute`), sharing this
  * file only because they're two views of the same feature — never used together in one request.
  *
- * Host-side (`listBookingTypes`/`createBookingType`/etc.) is an ordinary mailbox-scoped
- * `BaseScopedChildRoute` CRUD surface, authenticated like every other mail API call, used by
+ * Host-side (`listBookingTypes`/`createBookingType`/etc., and the booking page's avatar and banner) is an
+ * ordinary mailbox-scoped surface, authenticated like every other mail API call, used by
  * `apps/settings-booking-types/**`. Public (`getPublicBookingType`/`getBookingSlots`/`bookSlot`/
  * `getBookingByToken`/`cancelBooking`/`rescheduleBooking`) is `BaseBookingRoute`'s entirely unauthenticated
  * half — no `jwt` cookie is ever sent or expected — used by `apps/book/**`, the plugin's public
  * (non-`AppShell`) pages.
  */
 
-import { apiFetch } from "@rapidmx/react-shared/util/api.js";
+import { ApiRequestError, apiFetch, apiUrl } from "@rapidmx/react-shared/util/api.js";
 import { ListParams, buildQuery } from "@rapidmx/react-shared/util/apiQuery.js";
 
 export interface BookingAvailabilityWindow {
@@ -52,6 +52,22 @@ export interface BookingType {
     maxPerDay?: number;
     requiresApproval: boolean;
     enabled: boolean;
+}
+
+/** `encodeURIComponent()`, except that `@` stays as it is: it is legal in a path segment, and a mailbox's uid is its
+ * address, so `jp@example.com` reads better in a link than `jp%40example.com`. */
+function encodeMailboxUid(mailboxUid: string): string {
+    return encodeURIComponent(mailboxUid).replace(/%40/g, "@");
+}
+
+/** The path of a booking type's public page, `/book/<mailbox>/<slug>`. */
+export function bookingPublicPath(mailboxUid: string, slug: string): string {
+    return `/book/${encodeMailboxUid(mailboxUid)}/${encodeURIComponent(slug)}`;
+}
+
+/** The full public URL of a booking type, on this site's own origin — what a host shares. Browser only. */
+export function bookingPublicUrl(mailboxUid: string, slug: string): string {
+    return `${window.location.origin}${bookingPublicPath(mailboxUid, slug)}`;
 }
 
 export function listBookingTypes(mailboxUid: string, params: ListParams = {}): Promise<BookingType[]> {
@@ -103,6 +119,9 @@ export function createBookingType(input: CreateBookingTypeInput): Promise<Bookin
 export interface UpdateBookingTypeInput {
     uid: string;
     version: number;
+    /** Moves the booking type to another mailbox; send `calendarFolderUid` of a calendar folder of that mailbox with it. */
+    mailboxUid?: string;
+    calendarFolderUid?: string;
     slug?: string;
     name?: string;
     description?: string;
@@ -137,6 +156,7 @@ export function deleteBookingType(uid: string, version: number): Promise<void> {
 // ---------------------------------------------------------------------------------------------------
 
 export interface PublicBookingType {
+    mailboxUid: string;
     slug: string;
     name: string;
     description?: string;
@@ -146,10 +166,19 @@ export interface PublicBookingType {
     requiresApproval: boolean;
     minimumNoticeMinutes: number;
     bookingWindowDays: number;
+    /** Set when the mailbox has an avatar; pass to `bookingProfileImageUrl()`. */
+    avatarVersion?: string;
+    /** Set when the mailbox has a banner; pass to `bookingProfileImageUrl()`. */
+    bannerVersion?: string;
 }
 
-export function getPublicBookingType(slug: string): Promise<PublicBookingType> {
-    return apiFetch(`/mail/bookings/types/${encodeURIComponent(slug)}`);
+/** The path, below `/mail/bookings/types`, of one booking type's public endpoints. */
+function publicTypePath(mailboxUid: string, slug: string): string {
+    return `/mail/bookings/types/${encodeMailboxUid(mailboxUid)}/${encodeURIComponent(slug)}`;
+}
+
+export function getPublicBookingType(mailboxUid: string, slug: string): Promise<PublicBookingType> {
+    return apiFetch(publicTypePath(mailboxUid, slug));
 }
 
 export interface BookingSlot {
@@ -157,12 +186,12 @@ export interface BookingSlot {
     end: string;
 }
 
-export function getBookingSlots(slug: string, from?: string, to?: string): Promise<BookingSlot[]> {
+export function getBookingSlots(mailboxUid: string, slug: string, from?: string, to?: string): Promise<BookingSlot[]> {
     const params = new URLSearchParams();
     if (from) params.set("from", from);
     if (to) params.set("to", to);
     const query = params.toString();
-    return apiFetch(`/mail/bookings/types/${encodeURIComponent(slug)}/slots${query ? `?${query}` : ""}`);
+    return apiFetch(`${publicTypePath(mailboxUid, slug)}/slots${query ? `?${query}` : ""}`);
 }
 
 export enum BookingStatus {
@@ -173,6 +202,7 @@ export enum BookingStatus {
 
 export interface PublicBooking {
     uid: string;
+    mailboxUid: string;
     bookingTypeSlug: string;
     name: string;
     hostDisplayName: string;
@@ -186,6 +216,10 @@ export interface PublicBooking {
     /** Only ever present on `bookSlot()`'s own response — the booker already has it by then, so no later
      * lookup (`getBookingByToken()` included) ever returns it again. */
     manageToken?: string;
+    /** Set when the host's mailbox has an avatar; pass to `bookingProfileImageUrl()`. */
+    avatarVersion?: string;
+    /** Set when the host's mailbox has a banner. */
+    bannerVersion?: string;
 }
 
 export interface BookSlotInput {
@@ -196,8 +230,8 @@ export interface BookSlotInput {
     bookerTimezone?: string;
 }
 
-export function bookSlot(slug: string, input: BookSlotInput): Promise<PublicBooking> {
-    return apiFetch(`/mail/bookings/types/${encodeURIComponent(slug)}`, {
+export function bookSlot(mailboxUid: string, slug: string, input: BookSlotInput): Promise<PublicBooking> {
+    return apiFetch(publicTypePath(mailboxUid, slug), {
         method: "POST",
         body: JSON.stringify(input),
     });
@@ -223,4 +257,51 @@ export function rescheduleBooking(token: string, start: string): Promise<PublicB
  * (`${mail:booking:public_url}/manage/:token`, see `apps/book/manage/[token].tsx`'s own doc comment). */
 export function bookingManageUrl(manageToken: string): string {
     return `/book/manage/${encodeURIComponent(manageToken)}`;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The booking page's avatar and banner — one pair per mailbox, shown on all of its booking pages.
+// ---------------------------------------------------------------------------------------------------
+
+export type BookingProfileImage = "avatar" | "banner";
+
+/** What a mailbox has set for its booking pages. A version is present exactly when that image is. */
+export interface BookingProfile {
+    mailboxUid: string;
+    avatarVersion?: string;
+    bannerVersion?: string;
+}
+
+/** The URL of a mailbox's avatar or banner. `version` (from the profile or the public booking type) busts the cache
+ * when the image is replaced, and lets the server cache it for good otherwise. */
+export function bookingProfileImageUrl(mailboxUid: string, image: BookingProfileImage, version: string): string {
+    return apiUrl(`/mail/booking-profiles/${encodeMailboxUid(mailboxUid)}/${image}?v=${encodeURIComponent(version)}`);
+}
+
+export function getBookingProfile(mailboxUid: string): Promise<BookingProfile> {
+    return apiFetch(`/mail/booking-profiles/${encodeMailboxUid(mailboxUid)}`);
+}
+
+/**
+ * Uploads `file` as the mailbox's avatar or banner. Bypasses `apiFetch` (which always forces `Content-Type:
+ * application/json`) because `BaseBookingProfileRoute` reads the raw request body, like the branding uploads do.
+ */
+export async function uploadBookingProfileImage(mailboxUid: string, image: BookingProfileImage, file: Blob): Promise<BookingProfile> {
+    const res = await fetch(apiUrl(`/mail/booking-profiles/${encodeMailboxUid(mailboxUid)}/${image}`), {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+    });
+    const contentType = res.headers.get("content-type") ?? "";
+    const responseBody = contentType.includes("application/json") ? await res.json().catch(() => undefined) : undefined;
+    if (!res.ok) {
+        const message = (responseBody && (responseBody.message || responseBody.error)) || res.statusText || "Upload failed.";
+        throw new ApiRequestError(message, res.status, responseBody?.code);
+    }
+    return responseBody as BookingProfile;
+}
+
+export function deleteBookingProfileImage(mailboxUid: string, image: BookingProfileImage): Promise<BookingProfile> {
+    return apiFetch(`/mail/booking-profiles/${encodeMailboxUid(mailboxUid)}/${image}`, { method: "DELETE" });
 }
