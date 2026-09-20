@@ -1,6 +1,6 @@
 {
     "name": "@rapidmx/booking-plugin",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "RapidMX plugin that provides Calendly-style public booking of meetings.",
     "repository": "https://github.com/RapidMX/booking.git",
     "author": "RapidREST <rapidrests@gmail.com>",
