@@ -106,6 +106,10 @@
         "./sql": {
             "import": "./dist/lib/sql.js",
             "types": "./dist/types/sql.d.ts"
+        },
+        "./purge": {
+            "import": "./dist/lib/purge.js",
+            "types": "./dist/types/purge.d.ts"
         }
     },
     "typings": "dist/types/index.d.ts",

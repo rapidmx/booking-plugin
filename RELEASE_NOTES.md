@@ -1,5 +1,11 @@
 # Release Notes
 
+## Unreleased
+
+### Features
+
+- **A purge hook, so uninstalling with data leaves nothing behind (`./purge`).** When an administrator uninstalls the plugin with **Also delete all data this plugin stored**, the server (once no copy runs the plugin) runs `onPurge()` before it deletes the booking collections and tables: it deletes every profile image (`avatarBlobKey`/`bannerBlobKey`, kept in the `BlobStore` under `booking-profiles/`) by the keys recorded in the profile rows, and throws an `AbortPurgeError` - which stops the purge with the rows still there for a retry - if any image can't be deleted. The bookings the plugin created in people's calendars are the calendar owners' own events and are not touched. Needs a server with `purgeData` support (the next `@rapidmx/server`).
+
 ## v0.2.0
 
 > **Before publishing:** `package.json` `resolutions` and `devDependencies` still link `@rapidmx/restapi`,

@@ -135,3 +135,7 @@ and banner, and a redesigned public page (no repeated logo, host name/avatar/ban
   shell is now a `min-h-screen` flex column with a growing `<main>`.
 - **Not done, on purpose:** a `/book/<mailboxUid>` landing page listing a mailbox's links (it currently 404s); redirecting
   old `/book/<slug>` links.
+
+### 2026-09-21 (P1) - `./purge`: uninstalling with data deletes the profile images
+
+The server's "uninstall with data" (server NOTES, same date) finds this plugin's three collections/tables from its models but can't find its `BlobStore` images (no listing; the keys are only in `BookingProfile.avatarBlobKey`/`bannerBlobKey`). `src/purge.ts` exports `onPurge(ctx)` (package `exports["./purge"]`): reads the keys from the profile collection/table the server names in `ctx.models` (MongoDB `connection.db`, SQL via the driver's own quoting and `hasTable`) and deletes each with `ctx.blobStore.delete`; any failure, or images with no BlobStore, throws an error named `AbortPurgeError` so the server stops before the rows (the only record of the keys) are deleted and the purge can be retried. The context and the error are declared locally (a plugin imports nothing from the server; the server recognises the error by name). Bookings' calendar events are the mailbox owners' `CalendarEvent`s and are deliberately left. Tests: `test/purge.test.ts` (8). Verified in a real run against the server (see its NOTES): the image file was gone after the purge.
