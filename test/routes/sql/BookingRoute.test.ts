@@ -22,9 +22,11 @@ import { BookingTypeSQL } from "../../../src/models/sql/BookingTypeSQL.js";
 import { CalendarEventSQL, FolderSQL, MailboxSQL } from "@rapidmx/restapi/sql";
 import { BusyStatus, CalendarEventStatus, FolderType, RecipientType, RecurrenceFrequency } from "@rapidmx/restapi";
 import { BookingLocationType, BookingStatus } from "../../../src/models/types.js";
+import { VideoMeetingSQL, VideoMeetingInviteeSQL } from "@rapidmx/videoconf-plugin/sql";
 import { RecordingMailTransport, registerTestDoubles } from "../../testDoubles.js";
 import { bookingSecuritySuite } from "../bookingSecuritySuite.js";
 import { bookingMailboxSuite } from "../bookingMailboxSuite.js";
+import { bookingVideoconfIntegrationSuite } from "../bookingVideoconfIntegrationSuite.js";
 
 // Every slot below sits on one fixed, far-future date so that it is always in the future no matter when the
 // suite runs, WITHOUT freezing the clock. Freezing it with `vi.useFakeTimers({ toFake: ["Date"] })` is
@@ -57,6 +59,10 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
     let bookingRepo: Repository<BookingSQL>;
     let bookingProfileRepo: Repository<BookingProfileSQL>;
     let calendarEventRepo: Repository<CalendarEventSQL>;
+    // `@rapidmx/videoconf-plugin`'s own models, registered via `test/server-sql/models/index.ts` - used only by
+    // `bookingVideoconfIntegrationSuite`'s real, end-to-end coverage of the optional video meeting integration.
+    let videoMeetingRepo: Repository<VideoMeetingSQL>;
+    let videoMeetingInviteeRepo: Repository<VideoMeetingInviteeSQL>;
     let aclRepo: Repository<AccessControlListSQL>;
     let mailTransport: RecordingMailTransport;
 
@@ -150,6 +156,8 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             bookingRepo = conn.getRepository(BookingSQL);
             bookingProfileRepo = conn.getRepository(BookingProfileSQL);
             calendarEventRepo = conn.getRepository(CalendarEventSQL);
+            videoMeetingRepo = conn.getRepository(VideoMeetingSQL);
+            videoMeetingInviteeRepo = conn.getRepository(VideoMeetingInviteeSQL);
         } else {
             throw new Error("Could not find sql connection");
         }
@@ -163,7 +171,16 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
 
     beforeEach(async () => {
         // Child rows first - these tables are shared on disk with every other SQL test file in the run.
-        for (const repo of [bookingRepo, calendarEventRepo, bookingTypeRepo, bookingProfileRepo, folderRepo, mailboxRepo]) {
+        for (const repo of [
+            videoMeetingInviteeRepo,
+            videoMeetingRepo,
+            bookingRepo,
+            calendarEventRepo,
+            bookingTypeRepo,
+            bookingProfileRepo,
+            folderRepo,
+            mailboxRepo,
+        ]) {
             await repo.clear();
         }
         mailTransport.sent = [];
@@ -983,5 +1000,14 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         findBookings: async () => await bookingRepo.find(),
         rateLimiter: () => objectFactory.getInstance(RateLimiter),
         route: () => objectFactory.getInstance("routes.BookingRoute"),
+    });
+    bookingVideoconfIntegrationSuite({
+        app: () => server.getApplication(),
+        baseUrl,
+        mailboxUid: () => mailbox.uid,
+        createBookingType,
+        findBookings: async () => await bookingRepo.find(),
+        findVideoMeetings: async () => await videoMeetingRepo.find(),
+        findVideoMeetingInvitees: async () => await videoMeetingInviteeRepo.find(),
     });
 });

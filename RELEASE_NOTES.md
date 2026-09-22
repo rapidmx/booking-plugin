@@ -1,5 +1,18 @@
 # Release Notes
 
+## Unreleased
+
+### Features
+
+- **A video location option fills in its own meeting link automatically, when `@rapidmx/videoconf-plugin` is
+  installed.** A `BookingLocationOption` of type Video with no meeting URL set by the host now mints a real,
+  working one at booking time (a private video meeting with the booker as its sole invitee) instead of leaving
+  `Booking.locationVideoUrl` unset until the host fills it in by hand - detected and called at runtime, never a
+  hard dependency: this plugin installs and works exactly as before on a deployment that never installs video
+  conferencing at all, and a preset host URL is always used as-is. `@rapidmx/videoconf-plugin` is an
+  `optionalDependencies` entry, resolved with a dynamic `import()` that never fails the booking itself if it
+  can't be reached.
+
 ## v0.3.0
 
 ### Features

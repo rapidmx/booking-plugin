@@ -67,6 +67,12 @@ export function buildTestConfigDefaults(datastores: Record<string, any>) {
             booking: {
                 public_url: "https://bookings.rapidmx-test.example.com",
             },
+            // Read by `@rapidmx/videoconf-plugin`'s own `createSingleInviteeVideoMeeting()` (see
+            // `BaseBookingRoute.maybeCreateVideoMeetingJoinUrl()`) when that optional plugin is installed and
+            // active - matching its own test suite's identical value for `mail:videoconf:public_url`.
+            videoconf: {
+                public_url: "https://videoconf.rapidmx-test.example.com/meet",
+            },
         },
     };
 }

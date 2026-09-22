@@ -17,9 +17,11 @@ import { CalendarEventMongo, FolderMongo, MailboxMongo } from "@rapidmx/restapi/
 import { BusyStatus, CalendarEventStatus, FolderType, RecipientType, RecurrenceFrequency } from "@rapidmx/restapi";
 import { BookingLocationType, BookingStatus } from "../../../src/models/types.js";
 import { MongoMemoryServer } from "mongodb-memory-server";
+import { VideoMeetingMongo, VideoMeetingInviteeMongo } from "@rapidmx/videoconf-plugin/mongo";
 import { RecordingMailTransport, registerTestDoubles } from "../../testDoubles.js";
 import { bookingSecuritySuite } from "../bookingSecuritySuite.js";
 import { bookingMailboxSuite } from "../bookingMailboxSuite.js";
+import { bookingVideoconfIntegrationSuite } from "../bookingVideoconfIntegrationSuite.js";
 
 const mongod: MongoMemoryServer = new MongoMemoryServer({
     instance: {
@@ -59,6 +61,10 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
     let bookingRepo: MongoRepository<BookingMongo>;
     let bookingProfileRepo: MongoRepository<BookingProfileMongo>;
     let calendarEventRepo: MongoRepository<CalendarEventMongo>;
+    // `@rapidmx/videoconf-plugin`'s own models, registered via `test/server-mongo/models/index.ts` - used only by
+    // `bookingVideoconfIntegrationSuite`'s real, end-to-end coverage of the optional video meeting integration.
+    let videoMeetingRepo: MongoRepository<VideoMeetingMongo>;
+    let videoMeetingInviteeRepo: MongoRepository<VideoMeetingInviteeMongo>;
     let aclRepo: MongoRepository<any>;
     let mailTransport: RecordingMailTransport;
 
@@ -151,6 +157,8 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
             bookingRepo = conn.getMongoRepository("BookingMongo");
             bookingProfileRepo = conn.getMongoRepository("BookingProfileMongo");
             calendarEventRepo = conn.getMongoRepository("CalendarEventMongo");
+            videoMeetingRepo = conn.getMongoRepository("VideoMeetingMongo");
+            videoMeetingInviteeRepo = conn.getMongoRepository("VideoMeetingInviteeMongo");
         } else {
             throw new Error("Could not find mongo connection");
         }
@@ -164,7 +172,16 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
     });
 
     beforeEach(async () => {
-        for (const repo of [mailboxRepo, folderRepo, bookingTypeRepo, bookingRepo, bookingProfileRepo, calendarEventRepo]) {
+        for (const repo of [
+            mailboxRepo,
+            folderRepo,
+            bookingTypeRepo,
+            bookingRepo,
+            bookingProfileRepo,
+            calendarEventRepo,
+            videoMeetingRepo,
+            videoMeetingInviteeRepo,
+        ]) {
             try {
                 await repo.clear();
             } catch (err: any) {
@@ -990,5 +1007,14 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
         findBookings: async () => await bookingRepo.find({}).toArray(),
         rateLimiter: () => objectFactory.getInstance(RateLimiter),
         route: () => objectFactory.getInstance("routes.BookingRoute"),
+    });
+    bookingVideoconfIntegrationSuite({
+        app: () => server.getApplication(),
+        baseUrl,
+        mailboxUid: () => mailbox.uid,
+        createBookingType,
+        findBookings: async () => await bookingRepo.find({}).toArray(),
+        findVideoMeetings: async () => await videoMeetingRepo.find({}).toArray(),
+        findVideoMeetingInvitees: async () => await videoMeetingInviteeRepo.find({}).toArray(),
     });
 });

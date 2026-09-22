@@ -28,6 +28,7 @@ import {
     Folder,
     FolderType,
     Mailbox,
+    PluginRegistry,
     RecipientType,
     asEntity,
     buildEventIcs,
@@ -48,6 +49,35 @@ const { Config, Inject, Logger } = ObjectDecorators;
 const { Description, Summary } = DocDecorators;
 const { Transactional } = DatabaseDecorators;
 const { Get, Param, Post, Query, RateLimit, Request, Validate, User: AuthUser } = RouteDecorators;
+
+/**
+ * The exact npm package name `PluginRegistry.isActive()` checks - see `maybeCreateVideoMeetingJoinUrl()`'s doc
+ * comment below. `@rapidmx/videoconf-plugin` is never a hard dependency of this package: this repo's own
+ * `package.json` lists it only under `optionalDependencies` (installed if present, never required), plus a
+ * `devDependency` purely so the type-only import below resolves during this package's own build/test/lint.
+ */
+const VIDEOCONF_PLUGIN_NAME = "@rapidmx/videoconf-plugin";
+
+/**
+ * The exact shape of `@rapidmx/videoconf-plugin`'s own small, stable integration function - a type-only query
+ * (`typeof import(...)`), erased entirely from the compiled output, so referencing it here costs nothing at
+ * runtime on a deployment that never installs the package at all (see `maybeCreateVideoMeetingJoinUrl()`'s doc
+ * comment). Resolving it during THIS package's own `tsc`/lint/test needs `@rapidmx/videoconf-plugin`'s types
+ * locally, which is exactly what its `devDependency` entry in `package.json` is for.
+ */
+type CreateSingleInviteeVideoMeetingFn = typeof import("@rapidmx/videoconf-plugin").createSingleInviteeVideoMeeting;
+
+/**
+ * The concrete `VideoMeeting`/`VideoMeetingInvitee` model classes for one backend (Mongo or SQL) that
+ * `createSingleInviteeVideoMeeting()` needs to build its own repos with - mirroring how `meetingClass`/
+ * `inviteeClass` are already supplied to `BaseVideoMeetingRoute` itself. Untyped (`any`) for the same reason those
+ * fields are: the concrete class differs per backend, and this package never imports either one directly (see
+ * `importVideoconfBackend()`).
+ */
+interface VideoconfBackendClasses {
+    meetingClass: any;
+    inviteeClass: any;
+}
 
 /** The page size each availability busy-time query pages through its matches with - every page is read (see
  * `findAllEvents()`), so this bounds the size of one round trip, not how many events are considered. */
@@ -241,6 +271,20 @@ export abstract class BaseBookingRoute<
     protected abstract calendarEventClass: any;
     protected abstract folderClass: any;
     protected abstract mailboxClass: any;
+
+    /**
+     * Dynamically `import()`s this deployment's installed `@rapidmx/videoconf-plugin`, resolving its concrete
+     * `VideoMeeting`/`VideoMeetingInvitee` model classes for THIS route's own backend (Mongo or SQL) - `./mongo` or
+     * `./sql`, matching `bookingClass`/`mailboxClass`/etc.'s existing per-backend wiring above. `BaseBookingRoute`
+     * itself has no notion of "Mongo" vs. "SQL" (see this class's own doc comment), so each concrete subclass
+     * (`BookingRouteMongo`/`BookingRouteSQL`) implements this - mirroring exactly how those classes already supply
+     * their own concrete classes for every other abstract property here.
+     *
+     * Returns `undefined` (never throws) when the dynamic import itself fails for any reason - see
+     * `maybeCreateVideoMeetingJoinUrl()`'s doc comment for why that's still only defense in depth, not the only
+     * guard against a missing/broken video plugin ever blocking a booking.
+     */
+    protected abstract importVideoconfBackend(): Promise<VideoconfBackendClasses | undefined>;
 
     // Automatically injected by ObjectFactory on instantiation
     private _objectFactory?: ObjectFactory;
@@ -631,12 +675,69 @@ export abstract class BaseBookingRoute<
     }
 
     /**
+     * Mints a private, single-invitee `VideoMeeting` for a video-location booking that has no host-preset
+     * `videoUrl` of its own, via `@rapidmx/videoconf-plugin`'s own small, stable integration function
+     * (`createSingleInviteeVideoMeeting()`) - if, and only if, that plugin is installed AND active on this
+     * deployment. `book()` calls this (only for a `VIDEO` location option whose `videoUrl` is unset) immediately
+     * before `persistBooking()`, so the resolved join URL, if any, can be snapshotted onto the new `Booking` row
+     * exactly like a host-preset one already is - see `persistBooking()`'s own `resolvedVideoUrl` parameter.
+     *
+     * Deliberately called OUTSIDE `persistBooking()`'s own `@Transactional()` write: minting a video meeting
+     * writes to a completely different plugin's own collections/tables, and a video-conferencing integration
+     * problem must never roll back (or even touch) the `CalendarEvent`/`Booking` pair's own atomic write.
+     *
+     * **Two independent guards** keep a missing or misbehaving video plugin from ever blocking a booking:
+     * `PluginRegistry.isActive()` is checked before any attempt to load the package at all (the common case for
+     * most deployments, which never install video conferencing - short-circuits before either `import()` even
+     * runs), and everything after that (`importVideoconfBackend()`'s own dynamic `import()`, plus the integration
+     * call itself) is wrapped in one `try`/`catch` - any failure (the package is listed active but genuinely
+     * unresolvable, an incompatible version, the call itself throwing, ...) is logged and answered as `undefined`,
+     * identical to "the host hasn't set a video URL yet". **A booking must never fail because of a
+     * video-conferencing integration problem.**
+     *
+     * `@rapidmx/videoconf-plugin` is never a hard dependency of this package - see `package.json`: it appears only
+     * under `optionalDependencies` (installed if present, never required to install this package at all) plus a
+     * `devDependency` purely so the type-only import this file uses (`CreateSingleInviteeVideoMeetingFn`) resolves
+     * during this package's own build/test/lint - a real `import type`/`typeof import(...)` reference is erased
+     * entirely from the compiled output, so it costs nothing at runtime on a deployment that never installs the
+     * package at all. The actual load is always a dynamic `import()` (never a static one), specifically because a
+     * static import would fail to resolve entirely on such a deployment.
+     */
+    private async maybeCreateVideoMeetingJoinUrl(
+        mailboxUid: string,
+        title: string,
+        invitee: { email: string; displayName?: string },
+    ): Promise<string | undefined> {
+        if (!PluginRegistry.isActive(VIDEOCONF_PLUGIN_NAME)) {
+            return undefined;
+        }
+        try {
+            const backend: VideoconfBackendClasses | undefined = await this.importVideoconfBackend();
+            if (!backend) {
+                return undefined;
+            }
+            const { createSingleInviteeVideoMeeting }: { createSingleInviteeVideoMeeting: CreateSingleInviteeVideoMeetingFn } = await import(
+                VIDEOCONF_PLUGIN_NAME
+            );
+            return await createSingleInviteeVideoMeeting(this._objectFactory!, backend.meetingClass, backend.inviteeClass, mailboxUid, title, invitee);
+        } catch (err: any) {
+            this.logger?.warn(`BookingRoute: failed to mint a video meeting for mailbox ${mailboxUid}: ${err.message}`);
+            return undefined;
+        }
+    }
+
+    /**
      * Writes the `CalendarEvent`/`Booking` pair for a new booking. `@Transactional()` (resolving its datasource
      * from the `@Model(...)` on the concrete subclass, via the `modelClass` getter above) makes the two writes
      * atomic, so a failure partway through can never leave an event on the host's calendar with no booking row
      * behind it, or vice versa. `RepoUtils` picks the ambient transaction up on its own - no plumbing needed at
      * the call sites. Note this makes the pair atomic; it does not serialize two concurrent bookers, which is
      * the separate limitation documented on this class.
+     *
+     * @param resolvedVideoUrl The video URL to snapshot onto `Booking.locationVideoUrl` when `locationOption` is
+     * `VIDEO` - either its own preset `videoUrl`, or one freshly minted by `maybeCreateVideoMeetingJoinUrl()`;
+     * `book()` resolves which before calling this (see that method), so a video-conferencing integration failure
+     * can never roll back, or even touch, this method's own atomic write. Ignored for any other location type.
      */
     @Transactional()
     protected async persistBooking(
@@ -647,6 +748,7 @@ export abstract class BaseBookingRoute<
         mailbox: M,
         slot: OccurrenceWindow,
         body: BookingRequestBody,
+        resolvedVideoUrl?: string,
     ): Promise<B> {
         const bookerEmail: string = body.bookerEmail!.trim().toLowerCase();
         const confirmed: boolean = !bookingType.requiresApproval;
@@ -695,7 +797,7 @@ export abstract class BaseBookingRoute<
                 locationType: locationOption.type,
                 locationLabel: locationOption.label,
                 bookerPhone: locationOption.type === BookingLocationType.PHONE ? body.bookerPhone?.trim() : undefined,
-                locationVideoUrl: locationOption.type === BookingLocationType.VIDEO ? locationOption.videoUrl : undefined,
+                locationVideoUrl: locationOption.type === BookingLocationType.VIDEO ? resolvedVideoUrl : undefined,
                 bookerLocationInstructions:
                     locationOption.type === BookingLocationType.OTHER ? body.bookerLocationInstructions?.trim() : undefined,
                 bookerName: body.bookerName!.trim(),
@@ -941,7 +1043,21 @@ export abstract class BaseBookingRoute<
             throw new ApiError(ApiErrors.INTERNAL_ERROR, 500, ApiErrorMessages.INTERNAL_ERROR);
         }
 
-        const booking: B = await this.persistBooking(bookingType, meetingType, locationOption, folder, mailbox, slot, body);
+        // A video location with no host-preset URL of its own gets one minted automatically when
+        // `@rapidmx/videoconf-plugin` is installed and active - see `maybeCreateVideoMeetingJoinUrl()`'s doc
+        // comment. Resolved here (before `persistBooking()`, not inside it) so a video-conferencing integration
+        // failure can never roll back, or even touch, the booking's own atomic write. Every other location
+        // (including a video one with its own preset `videoUrl`) never even calls it - `resolvedVideoUrl` is then
+        // just `locationOption.videoUrl` passed through unchanged, exactly today's behavior.
+        const resolvedVideoUrl: string | undefined =
+            locationOption.type === BookingLocationType.VIDEO && !locationOption.videoUrl
+                ? await this.maybeCreateVideoMeetingJoinUrl(bookingType.mailboxUid, meetingType.name, {
+                      email: body.bookerEmail!.trim().toLowerCase(),
+                      displayName: body.bookerName!.trim(),
+                  })
+                : locationOption.videoUrl;
+
+        const booking: B = await this.persistBooking(bookingType, meetingType, locationOption, folder, mailbox, slot, body, resolvedVideoUrl);
 
         // Deliberately outside `persistBooking()`'s transaction: mailing a confirmation for a booking that
         // subsequently rolled back is not something a `try`/`catch` could take back.
