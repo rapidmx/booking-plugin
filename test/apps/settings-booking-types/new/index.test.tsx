@@ -45,7 +45,7 @@ const created = {
     slug: "intro-call",
     name: "Intro Call",
     hostDisplayName: "My Mail",
-    durationMinutes: 30,
+    meetingTypes: [{ uid: "mt1", name: "30 Minute Meeting", durationMinutes: 30, locationOptions: [{ uid: "lo1", type: "video" }] }],
     timezone: "America/New_York",
     availability: [],
     dateOverrides: [],
@@ -138,6 +138,7 @@ describe("NewBookingTypePage", () => {
         );
         const body = JSON.parse((fetchMock.mock.calls.find(([u]) => u === "/api/mail/booking-types")![1] as RequestInit).body as string);
         expect(body.calendarFolderUid).toBe("f-cal");
+        expect(body.meetingTypes).toEqual([{ name: "30 Minute Meeting", durationMinutes: 30, locationOptions: [{ type: "video" }] }]);
         await vi.waitFor(() => expect(location.href).toBe("/settings/booking-types/bt1?mailboxUid=mb1"));
     });
 

@@ -90,7 +90,7 @@ describe("Route:BookingTypeMongo Tests", () => {
         slug: `intro-${uuid.v4()}`,
         name: "Intro Call",
         hostDisplayName: "Ada Lovelace",
-        durationMinutes: 30,
+        meetingTypes: [{ name: "Intro Call", durationMinutes: 30, locationOptions: [{ type: "video" }] }],
         timezone: "America/New_York",
         availability: [{ dayOfWeek: 1, startMinute: 540, endMinute: 660 }],
         dateOverrides: [],

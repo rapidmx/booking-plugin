@@ -29,6 +29,29 @@ export interface BookingDateOverride {
     windows: BookingAvailabilityWindow[];
 }
 
+export enum BookingLocationType {
+    PHONE = "phone",
+    VIDEO = "video",
+    OTHER = "other",
+}
+
+export interface BookingLocationOption {
+    /** Omit when adding a new option - the server assigns one. Send back an existing option's uid to edit it in place. */
+    uid?: string;
+    type: BookingLocationType;
+    label?: string;
+    /** `VIDEO` only. Optional - may be left unset and filled in later per booking (see `setBookingLocationVideoUrl()`). */
+    videoUrl?: string;
+}
+
+export interface BookingMeetingType {
+    /** Omit when adding a new meeting type - the server assigns one. Send back an existing one's uid to edit it in place. */
+    uid?: string;
+    name: string;
+    durationMinutes: number;
+    locationOptions: BookingLocationOption[];
+}
+
 export interface BookingType {
     uid: string;
     version: number;
@@ -40,7 +63,7 @@ export interface BookingType {
     name: string;
     description?: string;
     hostDisplayName: string;
-    durationMinutes: number;
+    meetingTypes: BookingMeetingType[];
     timezone: string;
     availability: BookingAvailabilityWindow[];
     dateOverrides: BookingDateOverride[];
@@ -85,7 +108,7 @@ export interface CreateBookingTypeInput {
     name: string;
     description?: string;
     hostDisplayName: string;
-    durationMinutes: number;
+    meetingTypes: BookingMeetingType[];
     timezone: string;
     availability?: BookingAvailabilityWindow[];
     dateOverrides?: BookingDateOverride[];
@@ -126,7 +149,7 @@ export interface UpdateBookingTypeInput {
     name?: string;
     description?: string;
     hostDisplayName?: string;
-    durationMinutes?: number;
+    meetingTypes?: BookingMeetingType[];
     timezone?: string;
     availability?: BookingAvailabilityWindow[];
     dateOverrides?: BookingDateOverride[];
@@ -151,9 +174,40 @@ export function deleteBookingType(uid: string, version: number): Promise<void> {
     return apiFetch(`/mail/booking-types/${encodeURIComponent(uid)}?version=${version}`, { method: "DELETE" });
 }
 
+/** Host-only. The most recent bookings made against `bookingTypeUid`, most recent first - see
+ * `BaseBookingRoute.hostListBookings()`. Not paged - the route itself caps how many it returns. */
+export function listHostBookings(bookingTypeUid: string): Promise<PublicBooking[]> {
+    return apiFetch(`/mail/bookings/host?bookingTypeUid=${encodeURIComponent(bookingTypeUid)}`);
+}
+
+/** Host-only. Sets (or, with `undefined`, clears) one booking's video call URL - the escape hatch for a
+ * `VIDEO` location option that was left blank at meeting-type setup time, or to hand out a unique link for
+ * just this booking. 400 if the booking's location isn't `VIDEO`. */
+export function setBookingLocationVideoUrl(uid: string, locationVideoUrl: string | undefined): Promise<PublicBooking> {
+    return apiFetch(`/mail/bookings/host/${encodeURIComponent(uid)}/location`, {
+        method: "POST",
+        body: JSON.stringify({ locationVideoUrl }),
+    });
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Public, unauthenticated half — `apps/book/**` only. Every function below hits `/mail/bookings/...`.
 // ---------------------------------------------------------------------------------------------------
+
+/** A `BookingLocationOption`'s public projection - `videoUrl` is left out (shown only after booking, see
+ * `PublicBooking.locationVideoUrl`). */
+export interface PublicLocationOption {
+    uid: string;
+    type: BookingLocationType;
+    label?: string;
+}
+
+export interface PublicMeetingType {
+    uid: string;
+    name: string;
+    durationMinutes: number;
+    locationOptions: PublicLocationOption[];
+}
 
 export interface PublicBookingType {
     mailboxUid: string;
@@ -161,7 +215,7 @@ export interface PublicBookingType {
     name: string;
     description?: string;
     hostDisplayName: string;
-    durationMinutes: number;
+    meetingTypes: PublicMeetingType[];
     timezone: string;
     requiresApproval: boolean;
     minimumNoticeMinutes: number;
@@ -186,12 +240,12 @@ export interface BookingSlot {
     end: string;
 }
 
-export function getBookingSlots(mailboxUid: string, slug: string, from?: string, to?: string): Promise<BookingSlot[]> {
+export function getBookingSlots(mailboxUid: string, slug: string, meetingTypeUid: string, from?: string, to?: string): Promise<BookingSlot[]> {
     const params = new URLSearchParams();
+    params.set("meetingTypeUid", meetingTypeUid);
     if (from) params.set("from", from);
     if (to) params.set("to", to);
-    const query = params.toString();
-    return apiFetch(`${publicTypePath(mailboxUid, slug)}/slots${query ? `?${query}` : ""}`);
+    return apiFetch(`${publicTypePath(mailboxUid, slug)}/slots?${params.toString()}`);
 }
 
 export enum BookingStatus {
@@ -206,6 +260,13 @@ export interface PublicBooking {
     bookingTypeSlug: string;
     name: string;
     hostDisplayName: string;
+    meetingTypeUid: string;
+    meetingTypeName: string;
+    locationType: BookingLocationType;
+    locationLabel?: string;
+    bookerPhone?: string;
+    locationVideoUrl?: string;
+    bookerLocationInstructions?: string;
     bookerName: string;
     bookerEmail: string;
     bookerNotes?: string;
@@ -224,10 +285,16 @@ export interface PublicBooking {
 
 export interface BookSlotInput {
     start: string;
+    meetingTypeUid: string;
+    locationOptionUid: string;
     bookerName: string;
     bookerEmail: string;
     bookerNotes?: string;
     bookerTimezone?: string;
+    /** Required when the chosen location option's type is `PHONE`. */
+    bookerPhone?: string;
+    /** Required when the chosen location option's type is `OTHER`. */
+    bookerLocationInstructions?: string;
 }
 
 export function bookSlot(mailboxUid: string, slug: string, input: BookSlotInput): Promise<PublicBooking> {

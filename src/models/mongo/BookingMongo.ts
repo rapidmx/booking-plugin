@@ -5,7 +5,7 @@
 import { ObjectDecorators } from "@rapidrest/core";
 import { BaseMongoEntity, DocDecorators, ModelDecorators, PersistenceDecorators } from "@rapidrest/service-core";
 import { MailboxScopedData } from "@rapidmx/restapi";
-import { Booking, BookingStatus } from "../types.js";
+import { Booking, BookingLocationType, BookingStatus } from "../types.js";
 const { Description } = DocDecorators;
 const { DataStore, Protect } = ModelDecorators;
 const { Column, Entity, Index } = PersistenceDecorators;
@@ -50,6 +50,38 @@ export class BookingMongo extends BaseMongoEntity implements Booking {
     @Column()
     @Description("The unique identifier of the `CalendarEvent` created for this booking.")
     public calendarEventUid: string = "";
+
+    @Column()
+    @Description("The unique identifier of the `BookingMeetingType` this was booked as.")
+    public meetingTypeUid: string = "";
+
+    @Column()
+    @Description("The meeting type's name at the moment of booking.")
+    public meetingTypeName: string = "";
+
+    @Column()
+    @Description("The kind of location the booker chose.")
+    public locationType: BookingLocationType = BookingLocationType.OTHER;
+
+    @Column({ nullable: true })
+    @Description("The location option's label at the moment of booking, if it had one.")
+    @Nullable
+    public locationLabel?: string;
+
+    @Column({ nullable: true })
+    @Description("Set when locationType is PHONE: the phone number the booker typed in.")
+    @Nullable
+    public bookerPhone?: string;
+
+    @Column({ nullable: true })
+    @Description("Set when locationType is VIDEO and a URL is known, from setup time or set afterward by the host.")
+    @Nullable
+    public locationVideoUrl?: string;
+
+    @Column({ nullable: true })
+    @Description("Set when locationType is OTHER: the free-text instructions the booker typed in.")
+    @Nullable
+    public bookerLocationInstructions?: string;
 
     @Column()
     @Description("The booker's name.")
@@ -98,6 +130,13 @@ export class BookingMongo extends BaseMongoEntity implements Booking {
             this.mailboxUid = other.mailboxUid !== undefined ? other.mailboxUid : this.mailboxUid;
             this.folderUid = other.folderUid !== undefined ? other.folderUid : this.folderUid;
             this.calendarEventUid = other.calendarEventUid !== undefined ? other.calendarEventUid : this.calendarEventUid;
+            this.meetingTypeUid = other.meetingTypeUid !== undefined ? other.meetingTypeUid : this.meetingTypeUid;
+            this.meetingTypeName = other.meetingTypeName !== undefined ? other.meetingTypeName : this.meetingTypeName;
+            this.locationType = other.locationType !== undefined ? other.locationType : this.locationType;
+            this.locationLabel = "locationLabel" in other ? other.locationLabel : this.locationLabel;
+            this.bookerPhone = "bookerPhone" in other ? other.bookerPhone : this.bookerPhone;
+            this.locationVideoUrl = "locationVideoUrl" in other ? other.locationVideoUrl : this.locationVideoUrl;
+            this.bookerLocationInstructions = "bookerLocationInstructions" in other ? other.bookerLocationInstructions : this.bookerLocationInstructions;
             this.bookerName = other.bookerName !== undefined ? other.bookerName : this.bookerName;
             this.bookerEmail = other.bookerEmail !== undefined ? other.bookerEmail : this.bookerEmail;
             this.bookerNotes = "bookerNotes" in other ? other.bookerNotes : this.bookerNotes;

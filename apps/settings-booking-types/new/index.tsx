@@ -5,9 +5,10 @@
 import React, { FormEvent, useEffect, useState } from "react";
 import { ApiRequestError } from "@rapidmx/react-shared/util/api.js";
 import { Folder, listFolders } from "@rapidmx/react-shared/mail/mailApi.js";
-import { BookingAvailabilityWindow, createBookingType } from "../../shared/bookingApi.js";
+import { BookingAvailabilityWindow, BookingLocationType, BookingMeetingType, createBookingType } from "../../shared/bookingApi.js";
 import SettingsShell, { SettingsShellProps, useSettingsShell } from "@rapidmx/web-client/shared/components/settings/layout/SettingsShell.js";
 import AvailabilityEditor from "../../shared/components/AvailabilityEditor.js";
+import MeetingTypesEditor from "../../shared/components/MeetingTypesEditor.js";
 import MailboxSelect from "../../shared/components/MailboxSelect.js";
 import Alert from "@rapidmx/react-shared/components/feedback/Alert.js";
 import Button from "@rapidmx/react-shared/components/buttons/Button.js";
@@ -39,7 +40,9 @@ function NewBookingTypeForm() {
     const [name, setName] = useState("");
     const [description, setDescription] = useState("");
     const [hostDisplayName, setHostDisplayName] = useState(mailbox.displayName);
-    const [durationMinutes, setDurationMinutes] = useState(30);
+    const [meetingTypes, setMeetingTypes] = useState<BookingMeetingType[]>([
+        { name: "30 Minute Meeting", durationMinutes: 30, locationOptions: [{ type: BookingLocationType.VIDEO }] },
+    ]);
     const [timezone, setTimezone] = useState(mailbox.timezone);
     const [availability, setAvailability] = useState<BookingAvailabilityWindow[]>([]);
     const [minimumNoticeMinutes, setMinimumNoticeMinutes] = useState(60);
@@ -99,6 +102,10 @@ function NewBookingTypeForm() {
             setError("This mailbox has no Calendar folder yet.");
             return;
         }
+        if (meetingTypes.length === 0 || meetingTypes.some((mt) => !mt.name.trim() || mt.locationOptions.length === 0)) {
+            setError("Every meeting type needs a name and at least one location option.");
+            return;
+        }
 
         setSaving(true);
         try {
@@ -109,7 +116,7 @@ function NewBookingTypeForm() {
                 name: name.trim(),
                 description: description.trim() || undefined,
                 hostDisplayName: hostDisplayName.trim(),
-                durationMinutes,
+                meetingTypes,
                 timezone,
                 availability,
                 minimumNoticeMinutes,
@@ -178,28 +185,22 @@ function NewBookingTypeForm() {
                             onChange={(e) => setHostDisplayName(e.target.value)}
                         />
                     </FormField>
-                    <div className="grid grid-cols-2 gap-3">
-                        <FormField label="Duration (minutes)" htmlFor="durationMinutes">
-                            <input
-                                id="durationMinutes"
-                                type="number"
-                                min={1}
-                                className={INPUT_CLASS}
-                                value={durationMinutes}
-                                onChange={(e) => setDurationMinutes(Number(e.target.value))}
-                            />
-                        </FormField>
-                        <FormField label="Timezone" htmlFor="timezone">
-                            <input
-                                id="timezone"
-                                type="text"
-                                className={INPUT_CLASS}
-                                value={timezone}
-                                onChange={(e) => setTimezone(e.target.value)}
-                                placeholder="America/New_York"
-                            />
-                        </FormField>
+                    <FormField label="Timezone" htmlFor="timezone">
+                        <input
+                            id="timezone"
+                            type="text"
+                            className={INPUT_CLASS}
+                            value={timezone}
+                            onChange={(e) => setTimezone(e.target.value)}
+                            placeholder="America/New_York"
+                        />
+                    </FormField>
+
+                    <div className="mb-4">
+                        <span className="block text-sm font-semibold mb-1.5 text-text">Meeting types</span>
+                        <MeetingTypesEditor value={meetingTypes} onChange={setMeetingTypes} />
                     </div>
+
                     <div className="grid grid-cols-2 gap-3">
                         <FormField label="Minimum notice (minutes)" htmlFor="minimumNoticeMinutes">
                             <input

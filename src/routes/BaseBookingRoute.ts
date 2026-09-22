@@ -4,8 +4,10 @@
 ///////////////////////////////////////////////////////////////////////////////
 import * as crypto from "crypto";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
-import { ApiError, ObjectDecorators } from "@rapidrest/core";
+import { ApiError, ObjectDecorators, type JWTUser } from "@rapidrest/core";
 import {
+    ACLAction,
+    ACLUtils,
     ApiErrorMessages,
     ApiErrors,
     DatabaseDecorators,
@@ -40,12 +42,12 @@ import {
     type OccurrenceWindow,
 } from "@rapidmx/restapi";
 import { generateCandidateSlots, normalizeSlug, subtractBusy } from "../util/BookingUtils.js";
-import { Booking, BookingProfile, BookingStatus, BookingType } from "../models/types.js";
+import { Booking, BookingLocationOption, BookingLocationType, BookingMeetingType, BookingProfile, BookingStatus, BookingType } from "../models/types.js";
 import { profileImageVersion } from "./BaseBookingProfileRoute.js";
 const { Config, Inject, Logger } = ObjectDecorators;
 const { Description, Summary } = DocDecorators;
 const { Transactional } = DatabaseDecorators;
-const { Get, Param, Post, Query, RateLimit, Request, Validate } = RouteDecorators;
+const { Get, Param, Post, Query, RateLimit, Request, Validate, User: AuthUser } = RouteDecorators;
 
 /** The page size each availability busy-time query pages through its matches with - every page is read (see
  * `findAllEvents()`), so this bounds the size of one round trip, not how many events are considered. */
@@ -62,6 +64,14 @@ const MAX_BOOKER_NAME_LENGTH = 200;
 const MAX_BOOKER_EMAIL_LENGTH = 254;
 const MAX_BOOKER_NOTES_LENGTH = 2000;
 const MAX_BOOKER_TIMEZONE_LENGTH = 64;
+const MAX_BOOKER_PHONE_LENGTH = 40;
+const MAX_BOOKER_LOCATION_INSTRUCTIONS_LENGTH = 2000;
+const MAX_VIDEO_URL_LENGTH = 2000;
+
+/** At most this many bookings the new host `GET /host` endpoint returns in one call - a simple cap, not a full
+ * paged listing, matching the scope of the "let a host see and manage individual bookings" capability this
+ * class was extended with (see `hostListBookings()`). */
+const MAX_HOST_BOOKINGS = 50;
 
 /** The default number of days of availability returned when the caller supplies no `to`. Further constrained
  * by the booking type's own `bookingWindowDays`, which `generateCandidateSlots()` applies. */
@@ -72,6 +82,23 @@ export const MAX_SLOTS_PER_RESPONSE = 500;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+/** The public projection of a `BookingLocationOption` - `videoUrl` is deliberately left out: a meeting link is
+ * shown to the person who booked it (`PublicBooking.locationVideoUrl`), not browsable by anyone with the
+ * public link before they've booked. */
+export interface PublicLocationOption {
+    uid: string;
+    type: BookingLocationType;
+    label?: string;
+}
+
+/** The public projection of a `BookingMeetingType`. */
+export interface PublicMeetingType {
+    uid: string;
+    name: string;
+    durationMinutes: number;
+    locationOptions: PublicLocationOption[];
+}
+
 /** The public projection of a `BookingType` - deliberately omits `calendarFolderUid`, an internal identifier an
  * anonymous caller has no business learning. `mailboxUid` is not one: it is the mailbox's address and is already part
  * of every public booking link. */
@@ -81,7 +108,7 @@ export interface PublicBookingType {
     name: string;
     description?: string;
     hostDisplayName: string;
-    durationMinutes: number;
+    meetingTypes: PublicMeetingType[];
     timezone: string;
     requiresApproval: boolean;
     minimumNoticeMinutes: number;
@@ -100,6 +127,13 @@ export interface PublicBooking {
     bookingTypeSlug: string;
     name: string;
     hostDisplayName: string;
+    meetingTypeUid: string;
+    meetingTypeName: string;
+    locationType: BookingLocationType;
+    locationLabel?: string;
+    bookerPhone?: string;
+    locationVideoUrl?: string;
+    bookerLocationInstructions?: string;
     bookerName: string;
     bookerEmail: string;
     bookerNotes?: string;
@@ -118,10 +152,16 @@ export interface PublicBooking {
 /** The request body accepted by `book()`. */
 interface BookingRequestBody {
     start?: string;
+    meetingTypeUid?: string;
+    locationOptionUid?: string;
     bookerName?: string;
     bookerEmail?: string;
     bookerNotes?: string;
     bookerTimezone?: string;
+    /** Required, and used, only when the chosen location option's type is `PHONE`. */
+    bookerPhone?: string;
+    /** Required, and used, only when the chosen location option's type is `OTHER`. */
+    bookerLocationInstructions?: string;
 }
 
 /** A very small sanity check on a booker-supplied address - deliberately not a full RFC 5322 parser. Its job is
@@ -218,6 +258,9 @@ export abstract class BaseBookingRoute<
     @Inject(RateLimiter)
     private rateLimiter?: RateLimiter;
 
+    @Inject(ACLUtils)
+    private aclUtils?: ACLUtils;
+
     @Config("trusted_proxies", [])
     private trustedProxies: string[] = [];
 
@@ -300,6 +343,26 @@ export abstract class BaseBookingRoute<
         return matches[0];
     }
 
+    /** Resolves `meetingTypeUid` against `bookingType.meetingTypes`, rejecting a `400` if it's missing or names
+     * none of them - checked before any rate limiting or availability work, same as `requireBookingType()`. */
+    private requireMeetingType(bookingType: BT, meetingTypeUid: string | undefined): BookingMeetingType {
+        const meetingType: BookingMeetingType | undefined = (bookingType.meetingTypes ?? []).find((mt) => mt.uid === meetingTypeUid);
+        if (!meetingType) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "meetingTypeUid must name one of this booking type's meeting types.");
+        }
+        return meetingType;
+    }
+
+    /** Resolves `locationOptionUid` against `meetingType.locationOptions`, rejecting a `400` if it's missing or
+     * names none of them. */
+    private requireLocationOption(meetingType: BookingMeetingType, locationOptionUid: string | undefined): BookingLocationOption {
+        const option: BookingLocationOption | undefined = (meetingType.locationOptions ?? []).find((lo) => lo.uid === locationOptionUid);
+        if (!option) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "locationOptionUid must name one of the meeting type's location options.");
+        }
+        return option;
+    }
+
     private async requireBookingByToken(token: string): Promise<B> {
         if (typeof token !== "string" || !MANAGE_TOKEN_PATTERN.test(token)) {
             throw new ApiError(ApiErrors.NOT_FOUND, 404, ApiErrorMessages.NOT_FOUND);
@@ -319,6 +382,19 @@ export abstract class BaseBookingRoute<
         return { avatarVersion: profileImageVersion(profile?.avatarBlobKey), bannerVersion: profileImageVersion(profile?.bannerBlobKey) };
     }
 
+    private toPublicMeetingTypes(bookingType: BT): PublicMeetingType[] {
+        return (bookingType.meetingTypes ?? []).map((meetingType) => ({
+            uid: meetingType.uid,
+            name: meetingType.name,
+            durationMinutes: meetingType.durationMinutes,
+            locationOptions: (meetingType.locationOptions ?? []).map((option) => ({
+                uid: option.uid,
+                type: option.type,
+                label: option.label,
+            })),
+        }));
+    }
+
     private async toPublicBookingType(bookingType: BT): Promise<PublicBookingType> {
         return {
             mailboxUid: bookingType.mailboxUid,
@@ -326,7 +402,7 @@ export abstract class BaseBookingRoute<
             name: bookingType.name,
             description: bookingType.description,
             hostDisplayName: bookingType.hostDisplayName,
-            durationMinutes: bookingType.durationMinutes,
+            meetingTypes: this.toPublicMeetingTypes(bookingType),
             timezone: bookingType.timezone,
             requiresApproval: bookingType.requiresApproval,
             minimumNoticeMinutes: bookingType.minimumNoticeMinutes,
@@ -342,6 +418,13 @@ export abstract class BaseBookingRoute<
             bookingTypeSlug: bookingType.slug,
             name: bookingType.name,
             hostDisplayName: bookingType.hostDisplayName,
+            meetingTypeUid: booking.meetingTypeUid,
+            meetingTypeName: booking.meetingTypeName,
+            locationType: booking.locationType,
+            locationLabel: booking.locationLabel,
+            bookerPhone: booking.bookerPhone,
+            locationVideoUrl: booking.locationVideoUrl,
+            bookerLocationInstructions: booking.bookerLocationInstructions,
             bookerName: booking.bookerName,
             bookerEmail: booking.bookerEmail,
             bookerNotes: booking.bookerNotes,
@@ -504,11 +587,13 @@ export abstract class BaseBookingRoute<
      * calendar - the caller's claim that a slot was free when they loaded the page is never trusted.
      *
      * `rescheduling` is the booking being moved, if any: neither its own calendar event nor the booking itself (for
-     * `maxPerDay`) counts as a conflict with itself.
+     * `maxPerDay`) counts as a conflict with itself. `durationMinutes` is the selected meeting type's duration for a
+     * new booking, or the booking's own existing duration for a reschedule - see `generateCandidateSlots()`'s doc
+     * comment for why the latter is not re-derived from `meetingTypes`.
      */
-    private async requireAvailableSlot(bookingType: BT, start: Date, now: Date, rescheduling?: B): Promise<OccurrenceWindow> {
+    private async requireAvailableSlot(bookingType: BT, durationMinutes: number, start: Date, now: Date, rescheduling?: B): Promise<OccurrenceWindow> {
         const excludeEventUid: string | undefined = rescheduling?.calendarEventUid;
-        const candidates: OccurrenceWindow[] = generateCandidateSlots(bookingType, start, new Date(start.getTime() + 1), now);
+        const candidates: OccurrenceWindow[] = generateCandidateSlots(bookingType, durationMinutes, start, new Date(start.getTime() + 1), now);
         const slot: OccurrenceWindow | undefined = candidates.find((candidate) => candidate.start.getTime() === start.getTime());
         if (!slot) {
             throw new ApiError(ApiErrors.IDENTIFIER_EXISTS, 409, "That time is not available for booking.");
@@ -554,7 +639,15 @@ export abstract class BaseBookingRoute<
      * the separate limitation documented on this class.
      */
     @Transactional()
-    protected async persistBooking(bookingType: BT, folder: F, mailbox: M, slot: OccurrenceWindow, body: BookingRequestBody): Promise<B> {
+    protected async persistBooking(
+        bookingType: BT,
+        meetingType: BookingMeetingType,
+        locationOption: BookingLocationOption,
+        folder: F,
+        mailbox: M,
+        slot: OccurrenceWindow,
+        body: BookingRequestBody,
+    ): Promise<B> {
         const bookerEmail: string = body.bookerEmail!.trim().toLowerCase();
         const confirmed: boolean = !bookingType.requiresApproval;
 
@@ -562,7 +655,7 @@ export abstract class BaseBookingRoute<
             new this.calendarEventClass({
                 folderUid: folder.uid,
                 mailboxUid: bookingType.mailboxUid,
-                title: `${bookingType.name} with ${body.bookerName!.trim()}`,
+                title: `${meetingType.name} with ${body.bookerName!.trim()}`,
                 startDate: slot.start,
                 endDate: slot.end,
                 allDay: false,
@@ -597,6 +690,14 @@ export abstract class BaseBookingRoute<
                 mailboxUid: bookingType.mailboxUid,
                 folderUid: folder.uid,
                 calendarEventUid: event.uid,
+                meetingTypeUid: meetingType.uid,
+                meetingTypeName: meetingType.name,
+                locationType: locationOption.type,
+                locationLabel: locationOption.label,
+                bookerPhone: locationOption.type === BookingLocationType.PHONE ? body.bookerPhone?.trim() : undefined,
+                locationVideoUrl: locationOption.type === BookingLocationType.VIDEO ? locationOption.videoUrl : undefined,
+                bookerLocationInstructions:
+                    locationOption.type === BookingLocationType.OTHER ? body.bookerLocationInstructions?.trim() : undefined,
                 bookerName: body.bookerName!.trim(),
                 bookerEmail,
                 bookerNotes: body.bookerNotes,
@@ -620,6 +721,24 @@ export abstract class BaseBookingRoute<
      * Best-effort throughout, matching `ScanQueueJob.finalizeResourceDecision()` - the booking itself has
      * already been committed, so a mail failure is logged rather than thrown back at the booker.
      */
+    /** A human-readable line describing where/how the meeting happens, for the confirmation mail. `undefined`
+     * location details (an unset `videoUrl`, in particular) are worded so the booker knows more is coming
+     * rather than reading as an omission. */
+    private locationMailLine(booking: B): string {
+        const label: string = booking.locationLabel ?? { phone: "Phone", video: "Video call", other: "Other" }[booking.locationType];
+        switch (booking.locationType) {
+            case BookingLocationType.PHONE:
+                return `Location: ${label} - we'll call you at ${booking.bookerPhone}.`;
+            case BookingLocationType.VIDEO:
+                return booking.locationVideoUrl
+                    ? `Location: ${label} - ${booking.locationVideoUrl}`
+                    : `Location: ${label} - the meeting link will be shared with you before the meeting.`;
+            case BookingLocationType.OTHER:
+            default:
+                return `Location: ${label} - ${booking.bookerLocationInstructions}`;
+        }
+    }
+
     private async sendBookingMail(bookingType: BT, booking: B, event: CE, mailbox: M, cancelled: boolean): Promise<void> {
         try {
             const manageUrl: string | undefined = this.manageUrl(booking);
@@ -629,10 +748,13 @@ export abstract class BaseBookingRoute<
             const host: string = hostName ?? mailbox.primarySmtpAddress;
             const lines: string[] = [
                 cancelled
-                    ? `Your booking for '${bookingType.name}' with ${host} has been cancelled.`
-                    : `Your booking for '${bookingType.name}' with ${host} is confirmed.`,
+                    ? `Your booking for '${booking.meetingTypeName}' with ${host} has been cancelled.`
+                    : `Your booking for '${booking.meetingTypeName}' with ${host} is confirmed.`,
                 `When: ${booking.startDate.toISOString()} - ${booking.endDate.toISOString()} (UTC)`,
             ];
+            if (!cancelled) {
+                lines.push(this.locationMailLine(booking));
+            }
             if (!cancelled && bookingType.requiresApproval) {
                 lines.push("This booking is awaiting confirmation by the host.");
             }
@@ -643,7 +765,7 @@ export abstract class BaseBookingRoute<
             const composed: Buffer = await new MailComposer({
                 from: hostName ? { name: hostName, address: mailbox.primarySmtpAddress } : mailbox.primarySmtpAddress,
                 to: booking.bookerEmail,
-                subject: `${cancelled ? "Cancelled" : "Confirmed"}: ${bookingType.name}`,
+                subject: `${cancelled ? "Cancelled" : "Confirmed"}: ${booking.meetingTypeName}`,
                 text: lines.join("\n"),
                 icalEvent: {
                     method: cancelled ? "cancel" : "request",
@@ -679,12 +801,14 @@ export abstract class BaseBookingRoute<
     public async slots(
         @Param("mailboxUid") mailboxUid: string,
         @Param("slug") slug: string,
+        @Query("meetingTypeUid") meetingTypeUid: string | undefined,
         @Query("from") from: string | undefined,
         @Query("to") to: string | undefined,
         @Request req?: HttpRequest,
     ): Promise<OccurrenceWindow[]> {
         await this.init();
         const bookingType: BT = await this.requireBookingType(mailboxUid, slug);
+        const meetingType: BookingMeetingType = this.requireMeetingType(bookingType, meetingTypeUid);
         // Every call walks the availability configuration and pages the host's calendar - per source IP and booking
         // type, like `book()`, but on its own counter so browsing slots never uses up the visitor's booking attempts.
         await this.checkBookingRateLimit("booking-slots", bookingType, req);
@@ -693,7 +817,7 @@ export abstract class BaseBookingRoute<
         const windowStart: Date = from ? this.requireDate(from, "from") : now;
         const windowEnd: Date = to ? this.requireDate(to, "to") : new Date(windowStart.getTime() + DEFAULT_SLOT_WINDOW_DAYS * MS_PER_DAY);
 
-        const candidates: OccurrenceWindow[] = generateCandidateSlots(bookingType, windowStart, windowEnd, now);
+        const candidates: OccurrenceWindow[] = generateCandidateSlots(bookingType, meetingType.durationMinutes, windowStart, windowEnd, now);
         if (candidates.length === 0) {
             // Nothing the configuration allows, so nothing the calendar could possibly free up - skip the
             // busy-time queries entirely rather than paying for them to filter an empty list.
@@ -713,6 +837,26 @@ export abstract class BaseBookingRoute<
      * checks on the request body only, independent of the `:slug` booking type or slot availability
      * (which need a DB round-trip and stay in `book()` itself as business-rule checks). */
     protected validateBook(body: BookingRequestBody | undefined): void {
+        if (typeof body?.meetingTypeUid !== "string" || !body.meetingTypeUid) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "'meetingTypeUid' is required.");
+        }
+        if (typeof body.locationOptionUid !== "string" || !body.locationOptionUid) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "'locationOptionUid' is required.");
+        }
+        if (body.bookerPhone != null && (typeof body.bookerPhone !== "string" || body.bookerPhone.trim().length > MAX_BOOKER_PHONE_LENGTH)) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, `'bookerPhone' must be a string of at most ${MAX_BOOKER_PHONE_LENGTH} characters.`);
+        }
+        if (
+            body.bookerLocationInstructions != null &&
+            (typeof body.bookerLocationInstructions !== "string" ||
+                body.bookerLocationInstructions.trim().length > MAX_BOOKER_LOCATION_INSTRUCTIONS_LENGTH)
+        ) {
+            throw new ApiError(
+                ApiErrors.INVALID_REQUEST,
+                400,
+                `'bookerLocationInstructions' must be a string of at most ${MAX_BOOKER_LOCATION_INSTRUCTIONS_LENGTH} characters.`,
+            );
+        }
         if (typeof body?.bookerName !== "string" || !body.bookerName.trim()) {
             throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "'bookerName' is required.");
         }
@@ -780,8 +924,16 @@ export abstract class BaseBookingRoute<
         // (keyed by the stored mailbox and slug) - not one per arbitrary link an anonymous caller makes up.
         const bookingType: BT = await this.requireBookingType(mailboxUid, slug);
         await this.checkBookingRateLimit("booking", bookingType, req);
+        const meetingType: BookingMeetingType = this.requireMeetingType(bookingType, body.meetingTypeUid);
+        const locationOption: BookingLocationOption = this.requireLocationOption(meetingType, body.locationOptionUid);
+        if (locationOption.type === BookingLocationType.PHONE && !body.bookerPhone?.trim()) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "'bookerPhone' is required for a phone booking.");
+        }
+        if (locationOption.type === BookingLocationType.OTHER && !body.bookerLocationInstructions?.trim()) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "'bookerLocationInstructions' is required for this location.");
+        }
         const start: Date = this.requireDate(body.start, "start");
-        const slot: OccurrenceWindow = await this.requireAvailableSlot(bookingType, start, new Date());
+        const slot: OccurrenceWindow = await this.requireAvailableSlot(bookingType, meetingType.durationMinutes, start, new Date());
 
         const folder: F = await this.resolveBookingFolder(bookingType);
         const mailbox: M | undefined = await this.mailboxRepo!.findOne(bookingType.mailboxUid, { ignoreACL: true });
@@ -789,7 +941,7 @@ export abstract class BaseBookingRoute<
             throw new ApiError(ApiErrors.INTERNAL_ERROR, 500, ApiErrorMessages.INTERNAL_ERROR);
         }
 
-        const booking: B = await this.persistBooking(bookingType, folder, mailbox, slot, body);
+        const booking: B = await this.persistBooking(bookingType, meetingType, locationOption, folder, mailbox, slot, body);
 
         // Deliberately outside `persistBooking()`'s transaction: mailing a confirmation for a booking that
         // subsequently rolled back is not something a `try`/`catch` could take back.
@@ -879,7 +1031,11 @@ export abstract class BaseBookingRoute<
         }
 
         const start: Date = this.requireDate(body?.start, "start");
-        const slot: OccurrenceWindow = await this.requireAvailableSlot(bookingType, start, new Date(), booking);
+        // The booking's own original duration, not a fresh `meetingTypes` lookup - see `generateCandidateSlots()`'s
+        // doc comment: a reschedule must never silently change length because the host has since edited (or
+        // removed) the meeting type it was booked as.
+        const durationMinutes: number = (booking.endDate.getTime() - booking.startDate.getTime()) / 60_000;
+        const slot: OccurrenceWindow = await this.requireAvailableSlot(bookingType, durationMinutes, start, new Date(), booking);
 
         const event: CE | undefined = await this.calendarEventRepo!.findOne(booking.calendarEventUid, { ignoreACL: true, skipCache: true });
         const mailbox: M | undefined = await this.mailboxRepo!.findOne(booking.mailboxUid, { ignoreACL: true });
@@ -915,5 +1071,87 @@ export abstract class BaseBookingRoute<
         // The booking's event or host mailbox has been deleted out from under it - there is nothing coherent
         // left to reschedule.
         throw new ApiError(ApiErrors.NOT_FOUND, 404, ApiErrorMessages.NOT_FOUND);
+    }
+
+    // -----------------------------------------------------------------------------------------------------------
+    // Host-only endpoints, under a `/host` prefix distinct from the anonymous `/types`/`/manage` families above.
+    // Unlike every other method on this class these ARE authenticated - checked against the booking's own
+    // mailbox's `AccessControlList` (`ACLAction.READ`/`UPDATE`), the same pattern `BaseBookingProfileRoute` uses,
+    // rather than against `Booking`'s own deny-all class ACL. This is currently the only way a host can see or
+    // touch an individual `Booking` at all: there is no general CRUD surface for it (see this class's own doc
+    // comment for why), and the one thing a host may need to change after the fact - a video call's URL, when it
+    // was left blank at meeting-type setup time - has no other route to go through.
+    // -----------------------------------------------------------------------------------------------------------
+
+    /** Rejects a caller without `action` on `mailboxUid` with a `403`. Mirrors `BaseBookingProfileRoute`'s helper
+     * of the same shape - the two classes don't share a base, so it's duplicated rather than invented a shared
+     * one for two call sites. */
+    private async requireMailboxPermission(mailboxUid: string, user: JWTUser | undefined, action: string): Promise<void> {
+        if (!mailboxUid || !(await this.aclUtils!.hasPermission(user, mailboxUid, action))) {
+            throw new ApiError(ApiErrors.AUTH_PERMISSION_FAILURE, 403, ApiErrorMessages.AUTH_PERMISSION_FAILURE);
+        }
+    }
+
+    @Summary("Lists a booking type's bookings.")
+    @Description(
+        "Host-only. Returns up to the most recent " +
+            MAX_HOST_BOOKINGS +
+            " bookings made against a booking type, most recent first. Requires READ on the booking type's mailbox.",
+    )
+    @Get("/host")
+    public async hostListBookings(@Query("bookingTypeUid") bookingTypeUid: string | undefined, @AuthUser user?: JWTUser): Promise<PublicBooking[]> {
+        await this.init();
+        if (!bookingTypeUid) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "'bookingTypeUid' is required.");
+        }
+        const bookingType: BT | undefined = await this.bookingTypeRepo!.findOne(bookingTypeUid, { ignoreACL: true });
+        if (!bookingType) {
+            throw new ApiError(ApiErrors.NOT_FOUND, 404, ApiErrorMessages.NOT_FOUND);
+        }
+        await this.requireMailboxPermission(bookingType.mailboxUid, user, ACLAction.READ);
+        const bookings: B[] = await this.bookingRepo!.find(
+            { bookingTypeUid, sort: { startDate: "DESC" }, limit: MAX_HOST_BOOKINGS } as any,
+            { ignoreACL: true, limit: MAX_HOST_BOOKINGS },
+        );
+        return await Promise.all(bookings.map((booking) => this.toPublicBooking(booking, bookingType, false)));
+    }
+
+    @Summary("Sets or clears a booking's video call URL.")
+    @Description(
+        "Host-only. Lets the host attach or change a per-booking meeting URL when the booking's location is a " +
+            "video call - either because none was configured on the meeting type, or to hand out a unique link for " +
+            "this one booking. Requires UPDATE on the booking's mailbox. 400 if the booking's location isn't VIDEO.",
+    )
+    @Post("/host/:uid/location")
+    public async setBookingLocationVideoUrl(
+        @Param("uid") uid: string,
+        body: { locationVideoUrl?: string } | undefined,
+        @AuthUser user?: JWTUser,
+    ): Promise<PublicBooking> {
+        await this.init();
+        const booking: B | undefined = await this.bookingRepo!.findOne(uid, { ignoreACL: true });
+        if (!booking) {
+            throw new ApiError(ApiErrors.NOT_FOUND, 404, ApiErrorMessages.NOT_FOUND);
+        }
+        await this.requireMailboxPermission(booking.mailboxUid, user, ACLAction.UPDATE);
+        if (booking.locationType !== BookingLocationType.VIDEO) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "This booking's location is not a video call.");
+        }
+        const videoUrl: string | undefined = body?.locationVideoUrl?.trim() || undefined;
+        if (videoUrl && videoUrl.length > MAX_VIDEO_URL_LENGTH) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, `'locationVideoUrl' must be at most ${MAX_VIDEO_URL_LENGTH} characters.`);
+        }
+        const bookingType: BT | undefined = await this.bookingTypeRepo!.findOne(booking.bookingTypeUid, { ignoreACL: true });
+        if (!bookingType) {
+            throw new ApiError(ApiErrors.NOT_FOUND, 404, ApiErrorMessages.NOT_FOUND);
+        }
+        // `null`, not `undefined`, to clear a previously-set URL - an undefined value is dropped from the
+        // generated SQL `UPDATE`, leaving the column stale (same reasoning as `BaseBookingProfileRoute.remove()`).
+        const updated: B = await this.bookingRepo!.update(
+            { uid: booking.uid, version: (booking as any).version, locationVideoUrl: videoUrl ?? null } as any,
+            booking,
+            { ignoreACL: true },
+        );
+        return await this.toPublicBooking(updated, bookingType, false);
     }
 }

@@ -8,7 +8,7 @@ import { request } from "@rapidrest/service-core/test";
 import { RepoUtils } from "@rapidrest/service-core";
 import { BaseBookingRoute } from "../../src/routes/BaseBookingRoute.js";
 import { BusyStatus, CalendarEventStatus, FolderType, RecurrenceFrequency } from "@rapidmx/restapi";
-import { BookingStatus } from "../../src/models/types.js";
+import { BookingLocationType, BookingStatus } from "../../src/models/types.js";
 
 const SLOT_1 = "2099-06-01T13:00:00.000Z";
 const SLOT_2 = "2099-06-01T14:00:00.000Z";
@@ -38,6 +38,8 @@ export interface BookingSecuritySuiteContext {
 export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
     const validBooking = (start: string = SLOT_1) => ({
         start,
+        meetingTypeUid: "mt-default",
+        locationOptionUid: "lo-default",
         bookerName: "Grace Hopper",
         bookerEmail: "grace@example.com",
         bookerNotes: "Looking forward to it.",
@@ -45,7 +47,7 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
     });
     const book = (slug: string, body: any) => request(ctx.app()).post(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${slug}`).send(body);
     const slotStarts = async (slug: string): Promise<string[]> =>
-        (await request(ctx.app()).get(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`)).body.map((slot: any) => slot.start);
+        (await request(ctx.app()).get(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${slug}/slots?meetingTypeUid=mt-default&from=${WINDOW_FROM}&to=${WINDOW_TO}`)).body.map((slot: any) => slot.start);
 
     describe("manage token", () => {
         it("never resolves a query operator in place of a token, so another booker's booking can't be read or cancelled", async () => {
@@ -195,7 +197,7 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
             const checkSpy = vi.spyOn(rateLimiter, "checkAndIncrement");
             try {
                 const bookingType = await ctx.createBookingType();
-                const slots = () => request(ctx.app()).get(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`);
+                const slots = () => request(ctx.app()).get(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}/slots?meetingTypeUid=mt-default&from=${WINDOW_FROM}&to=${WINDOW_TO}`);
 
                 expect((await slots()).status).toBe(200);
                 expect((await slots()).status).toBe(200);
@@ -223,7 +225,7 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
             try {
                 const bookingType = await ctx.createBookingType();
                 const slots = (forwardedFor: string) =>
-                    request(ctx.app()).get(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`).set("X-Forwarded-For", forwardedFor);
+                    request(ctx.app()).get(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}/slots?meetingTypeUid=mt-default&from=${WINDOW_FROM}&to=${WINDOW_TO}`).set("X-Forwarded-For", forwardedFor);
 
                 expect((await slots("198.51.100.1")).status).toBe(200);
                 expect((await slots("198.51.100.2")).status).toBe(429);
@@ -240,7 +242,7 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
             const spy = vi.spyOn(BaseBookingRoute.prototype as any, "clientAddress").mockImplementation(() => address);
             try {
                 const bookingType = await ctx.createBookingType();
-                const slots = () => request(ctx.app()).get(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`);
+                const slots = () => request(ctx.app()).get(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}/slots?meetingTypeUid=mt-default&from=${WINDOW_FROM}&to=${WINDOW_TO}`);
 
                 expect((await slots()).status).toBe(200);
                 address = "2001:db8:1:2:ffff:abcd:1234:5678";
@@ -261,7 +263,14 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
         it("caps one slots response at 500 slots (earliest first) and offers each start once even with duplicated windows", async () => {
             const window = { startMinute: 0, endMinute: 1440 };
             const bookingType = await ctx.createBookingType({
-                durationMinutes: 5,
+                meetingTypes: [
+                    {
+                        uid: "mt-default",
+                        name: "Intro Call",
+                        durationMinutes: 5,
+                        locationOptions: [{ uid: "lo-default", type: BookingLocationType.VIDEO }],
+                    },
+                ],
                 // Every window listed twice - the duplicates must not double any slot.
                 availability: [0, 1, 2, 3, 4, 5, 6].flatMap((dayOfWeek) => [
                     { dayOfWeek, ...window },
@@ -270,7 +279,7 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
             });
 
             const result = await request(ctx.app()).get(
-                `${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=2099-06-04T00:00:00.000Z`,
+                `${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}/slots?meetingTypeUid=mt-default&from=${WINDOW_FROM}&to=2099-06-04T00:00:00.000Z`,
             );
 
             expect(result.status).toBe(200);

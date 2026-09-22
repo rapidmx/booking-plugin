@@ -5,8 +5,10 @@
 [![npm version](https://img.shields.io/npm/v/@rapidmx/booking-plugin)](https://www.npmjs.com/package/@rapidmx/booking-plugin)
 
 Calendly-style booking pages for a [RapidMX server](https://github.com/RapidMX/server). A mailbox owner publishes
-booking links (booking types). Anyone with a link picks an open slot from the owner's live calendar and books it, with
-no account. The booker gets a confirmation email with a link to cancel or reschedule.
+booking links (booking types), each offering one or more meeting types (e.g. "15 Minute Chat" / "60 Minute Consultation")
+with their own duration and choice of locations (phone, video call, or a custom "other"). Anyone with a link picks a
+meeting type, an open slot from the owner's live calendar (availability is shared across all of a link's meeting types),
+and how to meet, and books it with no account. The booker gets a confirmation email with a link to cancel or reschedule.
 
 This plugin used to be part of `@rapidmx/restapi`, `@rapidmx/react-shared`, `@rapidmx/web-client` and the server. Room
 and resource booking (a resource mailbox's auto-accept and booking window) is unrelated and stays in core.
@@ -21,9 +23,15 @@ and resource booking (a resource mailbox's auto-accept and booking window) is un
     `/:mailboxUid/avatar` and `/:mailboxUid/banner` need update permission on the mailbox (the image is the raw request
     body, PNG, JPEG, GIF or WebP, up to 2 MiB for an avatar and 5 MiB for a banner, kept in the server's blob store);
     `GET /:mailboxUid` needs read permission; `GET` of an image is public.
-  - `/api/mail/bookings`: the anonymous half. `GET /types/:mailboxUid/:slug` and `GET /types/:mailboxUid/:slug/slots`
-    show a booking type and its open slots, `POST /types/:mailboxUid/:slug` books a slot, and `GET /manage/:token` with
-    `POST /manage/:token/cancel` and `POST /manage/:token/reschedule` manage a booking. Every write is rate limited.
+  - `/api/mail/bookings`: the anonymous half. `GET /types/:mailboxUid/:slug` shows a booking type, including its
+    `meetingTypes` (each with a duration and its own `locationOptions`); `GET /types/:mailboxUid/:slug/slots` takes a
+    required `meetingTypeUid` and shows that meeting type's open slots; `POST /types/:mailboxUid/:slug` books a slot,
+    given a `meetingTypeUid` and `locationOptionUid` (plus a phone number or free-text instructions, when the chosen
+    location needs one); `GET /manage/:token` with `POST /manage/:token/cancel` and `POST /manage/:token/reschedule`
+    manage a booking. Every write is rate limited. Two more endpoints are host-authenticated rather than anonymous:
+    `GET /host?bookingTypeUid=` lists a booking type's bookings, and `POST /host/:uid/location` sets or clears a
+    booking's video call URL - the escape hatch for a video location left blank when the meeting type was configured,
+    or to hand out a unique link for one booking.
 - **Public booking pages** at `/book/:mailboxUid/:slug` (for example `/book/jp@example.com/intro-call`) and
   `/book/manage/:token` (the `book` app, on the server's public host). A page shows the host's name, avatar and banner,
   the booking type, and the open times.
@@ -41,8 +49,9 @@ the server README's "Plugin UI" section).
 
 The package has two server entry points, `@rapidmx/booking-plugin/mongo` and `@rapidmx/booking-plugin/sql`, each
 exporting only the models and routes the server loads. The package root exports the backend-agnostic surface: the
-`Booking`/`BookingType` types, `BookingStatus`, the slot utilities (`generateCandidateSlots`, `subtractBusy`,
-`normalizeSlug`, `validateAvailability`) and the abstract `BaseBookingRoute`/`BaseBookingTypeRoute`.
+`Booking`/`BookingType`/`BookingMeetingType`/`BookingLocationOption` types, `BookingStatus`/`BookingLocationType`, the
+slot utilities (`generateCandidateSlots`, `subtractBusy`, `normalizeSlug`, `validateAvailability`) and the abstract
+`BaseBookingRoute`/`BaseBookingTypeRoute`.
 
 Peer dependencies: `@rapidmx/restapi` 0.12 or later, `@rapidrest/core` 5, `@rapidrest/service-core` 2,
 `@rapidmx/react-shared` 0.6 or later, `@rapidmx/web-client` 0.6 or later, and React 19.
@@ -68,8 +77,10 @@ modals).
 - `apps/book`: the public pages. They render their own branding header and footer and get the web client's stylesheet
   from the server's build.
 - `apps/settings-booking-types`: the list, new and detail pages. Each passes its props, including `pluginNav`, to
-  `SettingsShell` with `active="booking-types"`, so the Booking Links entry is highlighted.
-- `apps/shared`: `bookingApi.ts` (the typed API client) and `AvailabilityEditor`.
+  `SettingsShell` with `active="booking-types"`, so the Booking Links entry is highlighted. The detail page also lists
+  the link's recent bookings and lets the host set a video booking's meeting URL after the fact.
+- `apps/shared`: `bookingApi.ts` (the typed API client), `AvailabilityEditor` and `MeetingTypesEditor` (a booking link's
+  meeting types and their location options).
 
 ## Data
 
@@ -82,6 +93,11 @@ Both models are marked `@MailboxScopedData()` and the manifest declares `mailbox
 removes the mailbox's booking types and bookings through the server's generic purge of mailbox-scoped plugin data, and
 waits while this plugin is installed but not loaded. With the plugin uninstalled, booking rows already in the database
 are left behind by an erasure.
+
+`BookingType.durationMinutes` was replaced by `BookingType.meetingTypes` (see [RELEASE_NOTES.md](RELEASE_NOTES.md)) -
+a breaking change to this plugin's own schema, with no migration. An existing `BookingType` row from before that
+change has no `meetingTypes`, so its public booking page has no meeting type to offer; edit and save the link in
+Settings to give it one.
 
 ## Development
 

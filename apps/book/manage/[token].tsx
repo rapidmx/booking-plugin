@@ -23,6 +23,7 @@ import Alert from "@rapidmx/react-shared/components/feedback/Alert.js";
 import Button from "@rapidmx/react-shared/components/buttons/Button.js";
 import Modal from "@rapidmx/react-shared/components/overlays/Modal.js";
 import { BookingCard, BookingPageShell } from "../_BookingChrome.js";
+import { locationSummary } from "../_locationSummary.js";
 import { SlotCursor, appendSlots, fetchSlotPage, initialSlotCursor } from "../_slotPaging.js";
 
 export default function ManageBookingPage({ params }: { params: { token: string } }) {
@@ -80,9 +81,16 @@ function ManageBookingContent({ token }: { token: string }) {
         setSlots([]);
         setNextSlots(null);
         try {
-            // Paged through the booking type's whole bookingWindowDays (see _slotPaging.ts).
+            // Paged through the booking type's whole bookingWindowDays (see _slotPaging.ts), for the booking's own
+            // meeting type - a reschedule keeps the same meeting type (and so the same duration/location) it was
+            // originally booked as.
             const type = await getPublicBookingType(booking!.mailboxUid, booking!.bookingTypeSlug);
-            const page = await fetchSlotPage(booking!.mailboxUid, booking!.bookingTypeSlug, initialSlotCursor(type?.bookingWindowDays));
+            const page = await fetchSlotPage(
+                booking!.mailboxUid,
+                booking!.bookingTypeSlug,
+                booking!.meetingTypeUid,
+                initialSlotCursor(type?.bookingWindowDays),
+            );
             setSlots(page.slots);
             setNextSlots(page.next);
         } catch (err) {
@@ -97,7 +105,7 @@ function ManageBookingContent({ token }: { token: string }) {
         setLoadingMore(true);
         setActionError(null);
         try {
-            const page = await fetchSlotPage(booking!.mailboxUid, booking!.bookingTypeSlug, cursor);
+            const page = await fetchSlotPage(booking!.mailboxUid, booking!.bookingTypeSlug, booking!.meetingTypeUid, cursor);
             setSlots((current) => appendSlots(current, page.slots));
             setNextSlots(page.next);
         } catch (err) {
@@ -144,7 +152,7 @@ function ManageBookingContent({ token }: { token: string }) {
                     <div className="flex flex-col gap-4">
                         <div>
                             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{booking.hostDisplayName}</h1>
-                            <h2 className="text-lg sm:text-xl font-semibold mt-3">{booking.name}</h2>
+                            <h2 className="text-lg sm:text-xl font-semibold mt-3">{booking.meetingTypeName}</h2>
                         </div>
 
                         {actionError && <Alert>{actionError}</Alert>}
@@ -156,6 +164,7 @@ function ManageBookingContent({ token }: { token: string }) {
                                 <p className="text-lg">
                                     <strong>{new Date(booking.startDate).toLocaleString()}</strong>
                                 </p>
+                                <p className="text-sm text-text-muted">{locationSummary(booking)}</p>
                                 {booking.status === BookingStatus.PENDING && (
                                     <p className="text-xs text-text-muted">Awaiting the host&rsquo;s confirmation.</p>
                                 )}

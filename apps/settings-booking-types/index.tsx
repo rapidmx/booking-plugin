@@ -81,7 +81,7 @@ function BookingTypesContent() {
                         <table className="w-full text-sm border-collapse">
                             <thead>
                                 <tr>
-                                    {["Name", "Link", "Duration", "Enabled", ""].map((h) => (
+                                    {["Name", "Link", "Meeting types", "Enabled", ""].map((h) => (
                                         <th
                                             key={h}
                                             className="text-left text-xs uppercase tracking-wide text-text-muted py-2 px-2.5 border-b border-border"
@@ -98,7 +98,9 @@ function BookingTypesContent() {
                                         <td className="py-2.5 px-2.5 border-b border-border break-all">
                                             {bookingPublicPath(bookingType.mailboxUid, bookingType.slug)}
                                         </td>
-                                        <td className="py-2.5 px-2.5 border-b border-border">{bookingType.durationMinutes} min</td>
+                                        <td className="py-2.5 px-2.5 border-b border-border">
+                                            {bookingType.meetingTypes.map((mt) => `${mt.name} (${mt.durationMinutes} min)`).join(", ")}
+                                        </td>
                                         <td className="py-2.5 px-2.5 border-b border-border">{bookingType.enabled ? "Yes" : "No"}</td>
                                         <td className="py-2.5 px-2.5 border-b border-border text-right whitespace-nowrap">
                                             <button

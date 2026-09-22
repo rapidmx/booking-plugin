@@ -7,14 +7,20 @@ import { ApiRequestError } from "@rapidmx/react-shared/util/api.js";
 import { Folder, listFolders } from "@rapidmx/react-shared/mail/mailApi.js";
 import {
     BookingAvailabilityWindow,
+    BookingLocationType,
+    BookingMeetingType,
     BookingType,
+    PublicBooking,
     bookingPublicUrl,
     deleteBookingType,
     getBookingType,
+    listHostBookings,
+    setBookingLocationVideoUrl,
     updateBookingType,
 } from "../shared/bookingApi.js";
 import SettingsShell, { SettingsShellProps, useSettingsShell } from "@rapidmx/web-client/shared/components/settings/layout/SettingsShell.js";
 import AvailabilityEditor from "../shared/components/AvailabilityEditor.js";
+import MeetingTypesEditor from "../shared/components/MeetingTypesEditor.js";
 import MailboxSelect from "../shared/components/MailboxSelect.js";
 import Alert from "@rapidmx/react-shared/components/feedback/Alert.js";
 import Button from "@rapidmx/react-shared/components/buttons/Button.js";
@@ -42,7 +48,7 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
     const [name, setName] = useState("");
     const [description, setDescription] = useState("");
     const [hostDisplayName, setHostDisplayName] = useState("");
-    const [durationMinutes, setDurationMinutes] = useState(30);
+    const [meetingTypes, setMeetingTypes] = useState<BookingMeetingType[]>([]);
     const [timezone, setTimezone] = useState("");
     const [availability, setAvailability] = useState<BookingAvailabilityWindow[]>([]);
     const [minimumNoticeMinutes, setMinimumNoticeMinutes] = useState(60);
@@ -61,6 +67,13 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
     const [deleting, setDeleting] = useState(false);
     const [deleteError, setDeleteError] = useState<string | null>(null);
 
+    const [bookings, setBookings] = useState<PublicBooking[]>([]);
+    const [bookingsLoading, setBookingsLoading] = useState(true);
+    const [bookingsError, setBookingsError] = useState<string | null>(null);
+    // Per-booking draft URL and in-flight state for the inline "set video URL" control, keyed by booking uid.
+    const [videoUrlDrafts, setVideoUrlDrafts] = useState<Record<string, string>>({});
+    const [savingVideoUrl, setSavingVideoUrl] = useState<string | null>(null);
+
     useEffect(() => {
         setLoading(true);
         setLoadError(null);
@@ -71,7 +84,7 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
                 setName(bt.name);
                 setDescription(bt.description ?? "");
                 setHostDisplayName(bt.hostDisplayName);
-                setDurationMinutes(bt.durationMinutes);
+                setMeetingTypes(bt.meetingTypes);
                 setTimezone(bt.timezone);
                 setAvailability(bt.availability);
                 setMinimumNoticeMinutes(bt.minimumNoticeMinutes);
@@ -82,6 +95,28 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
             .catch((err) => setLoadError(err instanceof ApiRequestError ? err.message : "Could not load this booking link."))
             .finally(() => setLoading(false));
     }, [uid]);
+
+    useEffect(() => {
+        setBookingsLoading(true);
+        setBookingsError(null);
+        listHostBookings(uid)
+            .then(setBookings)
+            .catch((err) => setBookingsError(err instanceof ApiRequestError ? err.message : "Could not load this link's bookings."))
+            .finally(() => setBookingsLoading(false));
+    }, [uid]);
+
+    async function handleSaveVideoUrl(bookingUid: string) {
+        setSavingVideoUrl(bookingUid);
+        setBookingsError(null);
+        try {
+            const updated = await setBookingLocationVideoUrl(bookingUid, videoUrlDrafts[bookingUid]?.trim() || undefined);
+            setBookings((current) => current.map((b) => (b.uid === bookingUid ? updated : b)));
+        } catch (err) {
+            setBookingsError(err instanceof ApiRequestError ? err.message : "Could not save this booking's video URL.");
+        } finally {
+            setSavingVideoUrl(null);
+        }
+    }
 
     async function handleSubmit(e: FormEvent) {
         e.preventDefault();
@@ -108,7 +143,7 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
                 // server's partial update. `UpdateBookingTypeInput` doesn't declare `null` yet, hence the cast.
                 description: description.trim() || (null as unknown as undefined),
                 hostDisplayName,
-                durationMinutes,
+                meetingTypes,
                 timezone,
                 availability,
                 minimumNoticeMinutes,
@@ -238,27 +273,21 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
                             onChange={(e) => setHostDisplayName(e.target.value)}
                         />
                     </FormField>
-                    <div className="grid grid-cols-2 gap-3">
-                        <FormField label="Duration (minutes)" htmlFor="durationMinutes">
-                            <input
-                                id="durationMinutes"
-                                type="number"
-                                min={1}
-                                className={INPUT_CLASS}
-                                value={durationMinutes}
-                                onChange={(e) => setDurationMinutes(Number(e.target.value))}
-                            />
-                        </FormField>
-                        <FormField label="Timezone" htmlFor="timezone">
-                            <input
-                                id="timezone"
-                                type="text"
-                                className={INPUT_CLASS}
-                                value={timezone}
-                                onChange={(e) => setTimezone(e.target.value)}
-                            />
-                        </FormField>
+                    <FormField label="Timezone" htmlFor="timezone">
+                        <input
+                            id="timezone"
+                            type="text"
+                            className={INPUT_CLASS}
+                            value={timezone}
+                            onChange={(e) => setTimezone(e.target.value)}
+                        />
+                    </FormField>
+
+                    <div className="mb-4">
+                        <span className="block text-sm font-semibold mb-1.5 text-text">Meeting types</span>
+                        <MeetingTypesEditor value={meetingTypes} onChange={setMeetingTypes} />
                     </div>
+
                     <div className="grid grid-cols-2 gap-3">
                         <FormField label="Minimum notice (minutes)" htmlFor="minimumNoticeMinutes">
                             <input
@@ -297,6 +326,63 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
                         </Button>
                     </div>
                 </form>
+
+                <div className="mt-8">
+                    <h2 className="text-base font-semibold mb-2">Upcoming bookings</h2>
+                    {bookingsError && <Alert>{bookingsError}</Alert>}
+                    {bookingsLoading ? (
+                        <p className="text-sm text-text-muted">Loading&hellip;</p>
+                    ) : bookings.length === 0 ? (
+                        <p className="text-sm text-text-muted">No bookings yet.</p>
+                    ) : (
+                        <ul className="flex flex-col gap-2">
+                            {bookings.map((booking) => (
+                                <li key={booking.uid} className="border border-border rounded-sm p-3 text-sm">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <span>
+                                            <strong>{new Date(booking.startDate).toLocaleString()}</strong> &mdash; {booking.meetingTypeName} with{" "}
+                                            {booking.bookerName} ({booking.bookerEmail})
+                                        </span>
+                                        <span className="text-text-muted">{booking.status}</span>
+                                    </div>
+                                    {booking.locationType === BookingLocationType.PHONE && (
+                                        <p className="text-text-muted mt-1">Phone: {booking.bookerPhone}</p>
+                                    )}
+                                    {booking.locationType === BookingLocationType.OTHER && (
+                                        <p className="text-text-muted mt-1">Other: {booking.bookerLocationInstructions}</p>
+                                    )}
+                                    {booking.locationType === BookingLocationType.VIDEO && (
+                                        <div className="flex items-end gap-2 mt-2">
+                                            <label className="flex-1 flex flex-col gap-1">
+                                                <span className="text-xs text-text-muted">
+                                                    Video URL {booking.locationVideoUrl ? "" : "(not set)"}
+                                                </span>
+                                                <input
+                                                    type="text"
+                                                    className={INPUT_CLASS}
+                                                    placeholder="https://..."
+                                                    value={videoUrlDrafts[booking.uid] ?? booking.locationVideoUrl ?? ""}
+                                                    onChange={(e) => setVideoUrlDrafts((d) => ({ ...d, [booking.uid]: e.target.value }))}
+                                                />
+                                            </label>
+                                            <Button
+                                                type="button"
+                                                variant="secondary"
+                                                aria-label="Save video URL"
+                                                className="!w-auto"
+                                                loading={savingVideoUrl === booking.uid}
+                                                disabled={savingVideoUrl === booking.uid}
+                                                onClick={() => handleSaveVideoUrl(booking.uid)}
+                                            >
+                                                Save
+                                            </Button>
+                                        </div>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
 
                 <Modal open={confirmingDelete} onClose={() => setConfirmingDelete(false)} title="Delete booking link">
                     <p className="text-sm mb-5">

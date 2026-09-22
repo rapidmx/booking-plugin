@@ -34,7 +34,7 @@ function bookingType(n: number, overrides: Record<string, unknown> = {}) {
         slug: `intro-${n}`,
         name: `Intro Call ${n}`,
         hostDisplayName: "My Mail",
-        durationMinutes: 30,
+        meetingTypes: [{ uid: `mt${n}`, name: "30 Minute Meeting", durationMinutes: 30, locationOptions: [{ uid: `lo${n}`, type: "video" }] }],
         timezone: "America/New_York",
         availability: [],
         dateOverrides: [],
@@ -92,7 +92,7 @@ describe("SettingsBookingTypesPage", () => {
         // The link column shows the mailbox-scoped public path.
         expect(screen.getByText("/book/mb1/intro-1")).toBeInTheDocument();
         expect(screen.getByText("/book/mb1/intro-2")).toBeInTheDocument();
-        expect(screen.getAllByText("30 min")).toHaveLength(2);
+        expect(screen.getAllByText("30 Minute Meeting (30 min)")).toHaveLength(2);
         expect(screen.getByText("Yes")).toBeInTheDocument();
         expect(screen.getByText("No")).toBeInTheDocument();
         expect(screen.getByRole("link", { name: "+ New booking link" })).toHaveAttribute(

@@ -32,13 +32,15 @@ export interface BookingMailboxSuiteContext {
 export function bookingMailboxSuite(ctx: BookingMailboxSuiteContext): void {
     const validBooking = (start: string = SLOT_1) => ({
         start,
+        meetingTypeUid: "mt-default",
+        locationOptionUid: "lo-default",
         bookerName: "Grace Hopper",
         bookerEmail: "grace@example.com",
         bookerNotes: "Looking forward to it.",
         bookerTimezone: "America/Chicago",
     });
     const typeUrl = (mailboxUid: string, slug: string, suffix: string = "") => `${ctx.baseUrl}/types/${mailboxUid}/${slug}${suffix}`;
-    const slotsSuffix = `/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`;
+    const slotsSuffix = `/slots?meetingTypeUid=mt-default&from=${WINDOW_FROM}&to=${WINDOW_TO}`;
     const book = (mailboxUid: string, slug: string, body: any = validBooking()) => request(ctx.app()).post(typeUrl(mailboxUid, slug)).send(body);
 
     describe("mailbox scoping", () => {

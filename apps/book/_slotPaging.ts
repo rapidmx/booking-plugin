@@ -46,14 +46,14 @@ export function initialSlotCursor(bookingWindowDays: number | undefined, now: nu
  * `MAX_REQUESTS_PER_PAGE` requests - so a page can be empty while `next` is still set. A cut-off response continues just
  * after its last slot.
  */
-export async function fetchSlotPage(mailboxUid: string, slug: string, cursor: SlotCursor): Promise<SlotPage> {
+export async function fetchSlotPage(mailboxUid: string, slug: string, meetingTypeUid: string, cursor: SlotCursor): Promise<SlotPage> {
     let from: number = cursor.from;
     for (let request = 1; ; request++) {
         if (from >= cursor.horizon) {
             return { slots: [], next: null };
         }
         const to: number = from + SLOT_CHUNK_DAYS * MS_PER_DAY;
-        const slots: BookingSlot[] = await getBookingSlots(mailboxUid, slug, new Date(from).toISOString(), new Date(to).toISOString());
+        const slots: BookingSlot[] = await getBookingSlots(mailboxUid, slug, meetingTypeUid, new Date(from).toISOString(), new Date(to).toISOString());
         let nextFrom: number = to;
         if (slots.length >= MAX_SLOTS_PER_RESPONSE) {
             const lastStart: number = new Date(slots[slots.length - 1].start).getTime();

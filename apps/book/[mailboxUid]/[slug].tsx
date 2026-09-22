@@ -5,8 +5,11 @@
 import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import { ApiRequestError } from "@rapidmx/react-shared/util/api.js";
 import {
+    BookingLocationType,
     BookingSlot,
+    PublicBooking,
     PublicBookingType,
+    PublicMeetingType,
     bookSlot,
     bookingManageUrl,
     getPublicBookingType,
@@ -15,6 +18,7 @@ import useBranding from "@rapidmx/react-shared/branding/useBranding.js";
 import Alert from "@rapidmx/react-shared/components/feedback/Alert.js";
 import Button from "@rapidmx/react-shared/components/buttons/Button.js";
 import { BookingCard, BookingPageShell } from "../_BookingChrome.js";
+import { LOCATION_TYPE_LABELS, locationSummary } from "../_locationSummary.js";
 import { SlotCursor, appendSlots, fetchSlotPage, initialSlotCursor } from "../_slotPaging.js";
 
 const INPUT_CLASS =
@@ -53,6 +57,7 @@ export default function PublicBookingPage({ params }: { params: { mailboxUid: st
 
 function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string }) {
     const [bookingType, setBookingType] = useState<PublicBookingType | null>(null);
+    const [selectedMeetingTypeUid, setSelectedMeetingTypeUid] = useState<string | null>(null);
     const [slots, setSlots] = useState<BookingSlot[]>([]);
     const [nextSlots, setNextSlots] = useState<SlotCursor | null>(null);
     const [loadingMore, setLoadingMore] = useState(false);
@@ -60,26 +65,40 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [selectedSlot, setSelectedSlot] = useState<BookingSlot | null>(null);
+    const [selectedLocationOptionUid, setSelectedLocationOptionUid] = useState<string | null>(null);
     const [bookerName, setBookerName] = useState("");
     const [bookerEmail, setBookerEmail] = useState("");
     const [bookerNotes, setBookerNotes] = useState("");
+    const [bookerPhone, setBookerPhone] = useState("");
+    const [bookerLocationInstructions, setBookerLocationInstructions] = useState("");
     const [booking, setBooking] = useState(false);
     const [bookError, setBookError] = useState<string | null>(null);
     const [confirmed, setConfirmed] = useState(false);
+    const [confirmedBooking, setConfirmedBooking] = useState<PublicBooking | null>(null);
     const [manageUrl, setManageUrl] = useState<string | null>(null);
+
+    const selectedMeetingType: PublicMeetingType | undefined = bookingType?.meetingTypes.find((mt) => mt.uid === selectedMeetingTypeUid);
+
+    // Defaults the location choice to the meeting type's first option whenever the meeting type changes (initial
+    // load included) - the visitor can still change it before submitting.
+    useEffect(() => {
+        setSelectedLocationOptionUid(selectedMeetingType?.locationOptions[0]?.uid ?? null);
+    }, [selectedMeetingType]);
 
     useEffect(() => {
         setLoading(true);
         setLoadError(null);
         setMoreError(null);
-        // The booking type says how far ahead it can be booked; slots are then paged through that whole window
-        // (see _slotPaging.ts), not just the first response's 30 days / 500 slots.
         getPublicBookingType(mailboxUid, slug)
             .then(async (type) => {
-                const page = type
-                    ? await fetchSlotPage(mailboxUid, slug, initialSlotCursor(type.bookingWindowDays))
+                const firstMeetingType = type?.meetingTypes[0];
+                // The booking type says how far ahead it can be booked; slots are then paged through that whole window
+                // (see _slotPaging.ts), not just the first response's 30 days / 500 slots.
+                const page = type && firstMeetingType
+                    ? await fetchSlotPage(mailboxUid, slug, firstMeetingType.uid, initialSlotCursor(type.bookingWindowDays))
                     : { slots: [], next: null };
                 setBookingType(type);
+                setSelectedMeetingTypeUid(firstMeetingType?.uid ?? null);
                 setSlots(page.slots);
                 setNextSlots(page.next);
             })
@@ -87,12 +106,35 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
             .finally(() => setLoading(false));
     }, [mailboxUid, slug]);
 
+    /** Switches which meeting type is being booked - its slots differ (a different duration), so the whole slot
+     * list is reloaded from the start rather than filtered client-side. */
+    async function handleSelectMeetingType(meetingTypeUid: string) {
+        setSelectedMeetingTypeUid(meetingTypeUid);
+        setSelectedSlot(null);
+        setSlots([]);
+        setNextSlots(null);
+        setMoreError(null);
+        setLoading(true);
+        try {
+            const page = await fetchSlotPage(mailboxUid, slug, meetingTypeUid, initialSlotCursor(bookingType?.bookingWindowDays));
+            setSlots(page.slots);
+            setNextSlots(page.next);
+        } catch (err) {
+            setLoadError(err instanceof ApiRequestError ? err.message : "Could not load this meeting type's open times.");
+        } finally {
+            setLoading(false);
+        }
+    }
+
     /** Only reachable from the "Show later times" button, which renders only while a `nextSlots` cursor exists. */
     async function handleLoadMore(cursor: SlotCursor) {
+        if (!selectedMeetingTypeUid) {
+            return;
+        }
         setLoadingMore(true);
         setMoreError(null);
         try {
-            const page = await fetchSlotPage(mailboxUid, slug, cursor);
+            const page = await fetchSlotPage(mailboxUid, slug, selectedMeetingTypeUid, cursor);
             setSlots((current) => appendSlots(current, page.slots));
             setNextSlots(page.next);
         } catch (err) {
@@ -103,6 +145,7 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
     }
 
     const grouped = useMemo(() => groupByLocalDate(slots), [slots]);
+    const selectedLocationOption = selectedMeetingType?.locationOptions.find((lo) => lo.uid === selectedLocationOptionUid);
 
     async function handleSubmit(e: FormEvent) {
         e.preventDefault();
@@ -111,16 +154,34 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
             setBookError("Your name and email are both required.");
             return;
         }
+        if (!selectedLocationOption) {
+            setBookError("Please choose how you'd like to meet.");
+            return;
+        }
+        if (selectedLocationOption.type === BookingLocationType.PHONE && !bookerPhone.trim()) {
+            setBookError("Please enter a phone number.");
+            return;
+        }
+        if (selectedLocationOption.type === BookingLocationType.OTHER && !bookerLocationInstructions.trim()) {
+            setBookError("Please describe how to reach you.");
+            return;
+        }
         setBooking(true);
         try {
             const result = await bookSlot(mailboxUid, slug, {
                 start: selectedSlot!.start,
+                meetingTypeUid: selectedMeetingType!.uid,
+                locationOptionUid: selectedLocationOption.uid,
                 bookerName: bookerName.trim(),
                 bookerEmail: bookerEmail.trim(),
                 bookerNotes: bookerNotes.trim() || undefined,
                 bookerTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                bookerPhone: selectedLocationOption.type === BookingLocationType.PHONE ? bookerPhone.trim() : undefined,
+                bookerLocationInstructions:
+                    selectedLocationOption.type === BookingLocationType.OTHER ? bookerLocationInstructions.trim() : undefined,
             });
             setManageUrl(result.manageToken ? bookingManageUrl(result.manageToken) : null);
+            setConfirmedBooking(result);
             setConfirmed(true);
         } catch (err) {
             setBookError(err instanceof ApiRequestError ? err.message : "Could not book this slot.");
@@ -157,7 +218,23 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
                 <div>
                     <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{bookingType.hostDisplayName}</h1>
                     <h2 className="text-lg sm:text-xl font-semibold mt-3">{bookingType.name}</h2>
-                    <p className="text-base text-text-muted mt-1">{bookingType.durationMinutes} minutes</p>
+                    {bookingType.meetingTypes.length > 1 && !confirmed ? (
+                        <div className="flex flex-col gap-1.5 mt-3">
+                            {bookingType.meetingTypes.map((mt) => (
+                                <label key={mt.uid} className="flex items-center gap-2 text-sm">
+                                    <input
+                                        type="radio"
+                                        name="meetingType"
+                                        checked={mt.uid === selectedMeetingTypeUid}
+                                        onChange={() => handleSelectMeetingType(mt.uid)}
+                                    />
+                                    {mt.name} &mdash; {mt.durationMinutes} minutes
+                                </label>
+                            ))}
+                        </div>
+                    ) : (
+                        selectedMeetingType && <p className="text-base text-text-muted mt-1">{selectedMeetingType.durationMinutes} minutes</p>
+                    )}
                     {bookingType.requiresApproval && (
                         <p className="text-sm text-text-muted mt-1">{bookingType.hostDisplayName} confirms each booking.</p>
                     )}
@@ -167,13 +244,14 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
                 </div>
 
                 <div className="mt-8 lg:mt-0 min-w-0">
-                    {confirmed && selectedSlot ? (
+                    {confirmed && selectedSlot && confirmedBooking ? (
                         <div>
                             <h2 className="text-xl font-bold tracking-tight mb-2">You&rsquo;re booked!</h2>
                             <p className="text-base text-text mb-4">
-                                {bookingType.name} with {bookingType.hostDisplayName} on{" "}
+                                {confirmedBooking.meetingTypeName} with {bookingType.hostDisplayName} on{" "}
                                 {new Date(selectedSlot.start).toLocaleString()}.
                             </p>
+                            <p className="text-sm text-text mb-4">{locationSummary(confirmedBooking)}</p>
                             {manageUrl && (
                                 <>
                                     <p className="text-sm text-text-muted mb-1">Save this link to cancel or reschedule later:</p>
@@ -265,6 +343,47 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
                                 value={bookerNotes}
                                 onChange={(e) => setBookerNotes(e.target.value)}
                             />
+
+                            {selectedMeetingType && selectedMeetingType.locationOptions.length > 0 && (
+                                <div className="flex flex-col gap-2">
+                                    <span className="text-sm font-semibold">How would you like to meet?</span>
+                                    {selectedMeetingType.locationOptions.map((option) => (
+                                        <label key={option.uid} className="flex items-center gap-2 text-base">
+                                            <input
+                                                type="radio"
+                                                name="locationOption"
+                                                checked={option.uid === selectedLocationOptionUid}
+                                                onChange={() => setSelectedLocationOptionUid(option.uid)}
+                                            />
+                                            {option.label ?? LOCATION_TYPE_LABELS[option.type]}
+                                        </label>
+                                    ))}
+                                    {selectedLocationOption?.type === BookingLocationType.PHONE && (
+                                        <input
+                                            aria-label="Your phone number"
+                                            type="tel"
+                                            placeholder="Your phone number"
+                                            className={INPUT_CLASS}
+                                            value={bookerPhone}
+                                            onChange={(e) => setBookerPhone(e.target.value)}
+                                        />
+                                    )}
+                                    {selectedLocationOption?.type === BookingLocationType.VIDEO && (
+                                        <p className="text-sm text-text-muted">The meeting link will be shared with you.</p>
+                                    )}
+                                    {selectedLocationOption?.type === BookingLocationType.OTHER && (
+                                        <textarea
+                                            aria-label="How to reach you"
+                                            placeholder="How can we reach you?"
+                                            rows={2}
+                                            className={INPUT_CLASS}
+                                            value={bookerLocationInstructions}
+                                            onChange={(e) => setBookerLocationInstructions(e.target.value)}
+                                        />
+                                    )}
+                                </div>
+                            )}
+
                             <div className="flex flex-wrap gap-2">
                                 <Button type="submit" loading={booking} disabled={booking} className="!w-auto">
                                     Confirm booking

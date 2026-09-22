@@ -84,6 +84,17 @@ Keep entries terse — this is a reference, not a transcript.
 - **No stylesheet import in the pages.** The server's plugin UI build injects a stylesheet into every plugin app's client
   entry (web-client's `app.css` plus an `@source` of the plugin package, so this package's Tailwind classes are
   generated). Importing web-client's `app.css` directly would add a second copy without the plugin's classes.
+- **`BookingType.meetingTypes`/each meeting type's `locationOptions` carry server-assigned `uid`s, never
+  client-chosen ones.** `BaseBookingTypeRoute.normalizeMeetingTypeUids()` mints one (`crypto.randomUUID()`) for any
+  entry the caller sends without one, on both create and update, and leaves an existing uid alone so an edit-in-place
+  keeps its identity. A `Booking` snapshots the meeting type's/location option's name/type/label (and, for video, the
+  URL) onto itself at booking time rather than re-resolving them later, so editing or deleting a meeting type or
+  location option never changes what an existing booking shows.
+- **`BaseBookingRoute` has one authenticated surface: `/host...`.** Everything else on that class is deliberately
+  anonymous (see its own doc comment). The two `/host` endpoints (list a booking type's bookings; set/clear a
+  booking's video URL) exist only because there was no other way for a host to see or touch an individual `Booking`
+  at all, and are checked against the *booking's own mailbox* ACL (`ACLUtils.hasPermission`), the same pattern
+  `BaseBookingProfileRoute` uses - not against `Booking`'s own deny-all class ACL, which stays deny-all.
 
 ## Session Log
 
@@ -139,3 +150,39 @@ and banner, and a redesigned public page (no repeated logo, host name/avatar/ban
 ### 2026-09-21 (P1) - `./purge`: uninstalling with data deletes the profile images
 
 The server's "uninstall with data" (server NOTES, same date) finds this plugin's three collections/tables from its models but can't find its `BlobStore` images (no listing; the keys are only in `BookingProfile.avatarBlobKey`/`bannerBlobKey`). `src/purge.ts` exports `onPurge(ctx)` (package `exports["./purge"]`): reads the keys from the profile collection/table the server names in `ctx.models` (MongoDB `connection.db`, SQL via the driver's own quoting and `hasTable`) and deletes each with `ctx.blobStore.delete`; any failure, or images with no BlobStore, throws an error named `AbortPurgeError` so the server stops before the rows (the only record of the keys) are deleted and the purge can be retried. The context and the error are declared locally (a plugin imports nothing from the server; the server recognises the error by name). Bookings' calendar events are the mailbox owners' `CalendarEvent`s and are deliberately left. Tests: `test/purge.test.ts` (8). Verified in a real run against the server (see its NOTES): the image file was gone after the purge.
+
+### 2026-09-22 — Multiple meeting types + configurable locations per booking link
+
+Two requests: a booking link should offer several meeting types (own duration each, shared availability), and a
+booker should pick a location (Phone/Video/Other) the host pre-configures per meeting type.
+
+- **Design decisions made up front (asked, not assumed):** location options live per meeting type, not shared
+  across the whole link; no back-compat/migration for the `durationMinutes` → `meetingTypes` change (there was no
+  deployed data to preserve, so this is a clean breaking change to the plugin's own schema - see the README's Data
+  section); a video location's URL is optional at setup and can be set/changed per booking afterward, which is why
+  the new `/host` endpoints (see standing decisions) exist at all.
+- **`durationMinutes` is gone from `BookingType`**, replaced by `meetingTypes: BookingMeetingType[]` (min 1,
+  validated by a new `validateMeetingTypes()` inside `BookingUtils.ts`). `generateCandidateSlots()` takes
+  `durationMinutes` as an explicit parameter instead of reading the booking type, since it's now per meeting type -
+  callers pass the selected meeting type's duration for a new booking, or the existing booking's own
+  `endDate - startDate` for a reschedule (deliberately not re-looked-up from `meetingTypes`, so editing/removing a
+  meeting type can never silently change an existing booking's length).
+- **`Booking` snapshots meeting-type/location fields at booking time** (`meetingTypeUid/Name`, `locationType`,
+  `locationLabel`, `bookerPhone`/`locationVideoUrl`/`bookerLocationInstructions` depending on the location's type) -
+  see the standing decision on why, and on the new `/host` endpoints this required.
+- **Public projection omits a location option's `videoUrl` before booking** (`PublicBookingType`/
+  `PublicMeetingType`/`PublicLocationOption` in `BaseBookingRoute.ts`) - a meeting link is shown to the person who
+  booked it (`PublicBooking.locationVideoUrl`), not browsable by anyone with the public link before they've booked.
+- **UI:** new `MeetingTypesEditor` (`apps/shared/components`) replaces the single duration field on the booking
+  link forms - note its per-meeting-type name field is labelled "Meeting type name", not "Name", specifically to
+  avoid colliding with the booking link's own "Name" field once both are on the same form (this bit real tests
+  during the session - `getByLabelText("Name")` became ambiguous). Same reasoning gave the "Remove meeting type"/
+  "Remove location option" buttons distinct `aria-label`s instead of both saying bare "Remove", and the detail
+  page's per-booking "Save video URL" button its own `aria-label` distinct from the form's own "Save" button.
+- **Tests:** ~200 test changes/additions across `test/util/BookingUtils.test.ts`, `test/models/{mongo,sql}.test.ts`,
+  all four `BookingTypeRoute`/`BookingRoute` route test files plus `bookingSecuritySuite.ts`/`bookingMailboxSuite.ts`
+  (split off to a background agent once the pattern was proven on `BookingTypeRoute.test.ts`'s single shared `body()`
+  fixture - fixtures that write directly to a repo, bypassing the route, need explicit fixed `uid`s for their meeting
+  types/location options since only the route mints them), and every UI test under `test/apps/settings-booking-types`
+  and `test/apps/book`. `test/plugin.test.ts`'s pinned root-export list grew by `BookingLocationType`,
+  `MAX_MEETING_TYPES`, `MAX_LOCATION_OPTIONS`. Full suite: 32 files, 722 tests, lint and both `tsc` builds clean.

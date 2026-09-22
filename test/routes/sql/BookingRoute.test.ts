@@ -12,8 +12,8 @@
 // actually exercises the transactional path.
 import config from "../../config.sql.js";
 import { request } from "@rapidrest/service-core/test";
-import { Server, ObjectFactory, ConnectionManager, isSqlDataSource, RateLimiter } from "@rapidrest/service-core";
-import { Logger } from "@rapidrest/core";
+import { Server, ObjectFactory, ConnectionManager, isSqlDataSource, RateLimiter, ACLAction, AccessControlListSQL } from "@rapidrest/service-core";
+import { JWTUtils, Logger } from "@rapidrest/core";
 import * as uuid from "uuid";
 import { Repository } from "typeorm";
 import { BookingSQL } from "../../../src/models/sql/BookingSQL.js";
@@ -21,7 +21,7 @@ import { BookingProfileSQL } from "../../../src/models/sql/BookingProfileSQL.js"
 import { BookingTypeSQL } from "../../../src/models/sql/BookingTypeSQL.js";
 import { CalendarEventSQL, FolderSQL, MailboxSQL } from "@rapidmx/restapi/sql";
 import { BusyStatus, CalendarEventStatus, FolderType, RecipientType, RecurrenceFrequency } from "@rapidmx/restapi";
-import { BookingStatus } from "../../../src/models/types.js";
+import { BookingLocationType, BookingStatus } from "../../../src/models/types.js";
 import { RecordingMailTransport, registerTestDoubles } from "../../testDoubles.js";
 import { bookingSecuritySuite } from "../bookingSecuritySuite.js";
 import { bookingMailboxSuite } from "../bookingMailboxSuite.js";
@@ -57,10 +57,16 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
     let bookingRepo: Repository<BookingSQL>;
     let bookingProfileRepo: Repository<BookingProfileSQL>;
     let calendarEventRepo: Repository<CalendarEventSQL>;
+    let aclRepo: Repository<AccessControlListSQL>;
     let mailTransport: RecordingMailTransport;
 
     let mailbox: MailboxSQL;
     let calendarFolder: FolderSQL;
+
+    const owner: any = { uid: uuid.v4(), roles: [], elevated: Date.now() };
+    const ownerToken = JWTUtils.createTokenSync(config.get("auth"), owner);
+    const otherUser: any = { uid: uuid.v4(), roles: [], elevated: Date.now() };
+    const otherUserToken = JWTUtils.createTokenSync(config.get("auth"), otherUser);
 
     const createBookingType = async function (data?: any): Promise<BookingTypeSQL> {
         return await bookingTypeRepo.save(
@@ -70,7 +76,14 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
                 slug: `intro-${uuid.v4()}`,
                 name: "Intro Call",
                 hostDisplayName: "Ada Lovelace",
-                durationMinutes: 60,
+                meetingTypes: [
+                    {
+                        uid: "mt-default",
+                        name: "Intro Call",
+                        durationMinutes: 60,
+                        locationOptions: [{ uid: "lo-default", type: BookingLocationType.VIDEO, videoUrl: "https://meet.example.com/ada" }],
+                    },
+                ],
                 timezone: "America/New_York",
                 availability: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({ dayOfWeek, startMinute: 540, endMinute: 660 })),
                 dateOverrides: [],
@@ -110,6 +123,8 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
 
     const validBooking = (start: string = SLOT_1) => ({
         start,
+        meetingTypeUid: "mt-default",
+        locationOptionUid: "lo-default",
         bookerName: "Grace Hopper",
         bookerEmail: "Grace@Example.com",
         bookerNotes: "Looking forward to it.",
@@ -121,7 +136,13 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         await server.start();
 
         const connMgr: ConnectionManager | undefined = objectFactory.getInstance(ConnectionManager);
-        const conn: any = connMgr?.connections.get("sql");
+        let conn: any = connMgr?.connections.get("acl");
+        if (isSqlDataSource(conn)) {
+            aclRepo = conn.getRepository(AccessControlListSQL);
+        } else {
+            throw new Error("Could not find sql acl connection");
+        }
+        conn = connMgr?.connections.get("sql");
         if (isSqlDataSource(conn)) {
             mailboxRepo = conn.getRepository(MailboxSQL);
             folderRepo = conn.getRepository(FolderSQL);
@@ -168,6 +189,16 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
                 syncKeyVersion: 0,
             }),
         );
+        // Grants `owner` access to the fixture mailbox, for the host-only `/host` endpoint tests below - every
+        // other test in this file is anonymous and never touches the ACL.
+        await aclRepo.save({
+            uid: mailbox.uid,
+            dateCreated: new Date(),
+            dateModified: new Date(),
+            version: 0,
+            records: [{ userOrRoleId: owner.uid, actions: [ACLAction.FULL] }],
+            parentUid: "Mailbox",
+        } as any);
     });
 
     describe("GET /types/:mailboxUid/:slug", () => {
@@ -179,7 +210,14 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             expect(result.status).toBe(200);
             expect(result.body.name).toBe("Intro Call");
             expect(result.body.hostDisplayName).toBe("Ada Lovelace");
-            expect(result.body.durationMinutes).toBe(60);
+            expect(result.body.meetingTypes).toEqual([
+                {
+                    uid: "mt-default",
+                    name: "Intro Call",
+                    durationMinutes: 60,
+                    locationOptions: [{ uid: "lo-default", type: BookingLocationType.VIDEO }],
+                },
+            ]);
             expect(result.body.mailboxUid).toBe(mailbox.uid);
             expect(result.body.calendarFolderUid).toBeUndefined();
         });
@@ -204,7 +242,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             const bookingType = await createBookingType();
 
             const result = await request(server.getApplication()).get(
-                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?meetingTypeUid=mt-default&from=${WINDOW_FROM}&to=${WINDOW_TO}`,
             );
 
             expect(result.status).toBe(200);
@@ -216,7 +254,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             await createEvent();
 
             const result = await request(server.getApplication()).get(
-                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?meetingTypeUid=mt-default&from=${WINDOW_FROM}&to=${WINDOW_TO}`,
             );
 
             expect(result.body.map((slot: any) => slot.start)).toEqual([SLOT_2]);
@@ -227,7 +265,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             await createEvent({ busyStatus: BusyStatus.FREE });
 
             const result = await request(server.getApplication()).get(
-                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?meetingTypeUid=mt-default&from=${WINDOW_FROM}&to=${WINDOW_TO}`,
             );
 
             expect(result.body.map((slot: any) => slot.start)).toEqual([SLOT_1, SLOT_2]);
@@ -244,7 +282,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             });
 
             const result = await request(server.getApplication()).get(
-                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?meetingTypeUid=mt-default&from=${WINDOW_FROM}&to=${WINDOW_TO}`,
             );
 
             expect(result.body.map((slot: any) => slot.start)).toEqual([SLOT_2]);
@@ -259,7 +297,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             });
 
             const result = await request(server.getApplication()).get(
-                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?meetingTypeUid=mt-default&from=${WINDOW_FROM}&to=${WINDOW_TO}`,
             );
 
             expect(result.body.map((slot: any) => slot.start)).toEqual([SLOT_1]);
@@ -268,7 +306,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         it("Defaults the window when no from/to is supplied.", async () => {
             const bookingType = await createBookingType();
 
-            const result = await request(server.getApplication()).get(`${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots`);
+            const result = await request(server.getApplication()).get(`${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?meetingTypeUid=mt-default`);
 
             expect(result.status).toBe(200);
             expect(result.body.length).toBeGreaterThan(0);
@@ -278,7 +316,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             const bookingType = await createBookingType({ availability: [] });
 
             const result = await request(server.getApplication()).get(
-                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+                `${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?meetingTypeUid=mt-default&from=${WINDOW_FROM}&to=${WINDOW_TO}`,
             );
 
             expect(result.body).toEqual([]);
@@ -287,7 +325,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         it("Rejects an unparseable from (400).", async () => {
             const bookingType = await createBookingType();
 
-            const result = await request(server.getApplication()).get(`${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?from=yesterday`);
+            const result = await request(server.getApplication()).get(`${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?meetingTypeUid=mt-default&from=yesterday`);
 
             expect(result.status).toBe(400);
         });
@@ -295,7 +333,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         it("Rejects an unparseable to (400).", async () => {
             const bookingType = await createBookingType();
 
-            const result = await request(server.getApplication()).get(`${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?to=someday`);
+            const result = await request(server.getApplication()).get(`${baseUrl}/types/${mailbox.uid}/${bookingType.slug}/slots?meetingTypeUid=mt-default&to=someday`);
 
             expect(result.status).toBe(400);
         });
@@ -313,6 +351,10 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             expect(result.body.manageToken).toBeTruthy();
             // The address is normalized on the way in.
             expect(result.body.bookerEmail).toBe("grace@example.com");
+            expect(result.body.meetingTypeUid).toBe("mt-default");
+            expect(result.body.meetingTypeName).toBe("Intro Call");
+            expect(result.body.locationType).toBe(BookingLocationType.VIDEO);
+            expect(result.body.locationVideoUrl).toBe("https://meet.example.com/ada");
 
             const events = await calendarEventRepo.find();
             expect(events).toHaveLength(1);
@@ -448,6 +490,126 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             const result = await book(bookingType.slug, validBooking());
 
             expect(result.status).toBe(500);
+        });
+    });
+
+    describe("meeting types and locations", () => {
+        it("Rejects a missing meetingTypeUid (400).", async () => {
+            const bookingType = await createBookingType();
+            const body: any = validBooking();
+            delete body.meetingTypeUid;
+
+            const result = await book(bookingType.slug, body);
+
+            expect(result.status).toBe(400);
+        });
+
+        it("Rejects a meetingTypeUid that names none of the booking type's meeting types (400).", async () => {
+            const bookingType = await createBookingType();
+
+            const result = await book(bookingType.slug, { ...validBooking(), meetingTypeUid: "no-such-meeting-type" });
+
+            expect(result.status).toBe(400);
+        });
+
+        it("Rejects a missing locationOptionUid (400).", async () => {
+            const bookingType = await createBookingType();
+            const body: any = validBooking();
+            delete body.locationOptionUid;
+
+            const result = await book(bookingType.slug, body);
+
+            expect(result.status).toBe(400);
+        });
+
+        it("Rejects a locationOptionUid that names none of the meeting type's location options (400).", async () => {
+            const bookingType = await createBookingType();
+
+            const result = await book(bookingType.slug, { ...validBooking(), locationOptionUid: "no-such-location" });
+
+            expect(result.status).toBe(400);
+        });
+
+        it("Rejects booking a phone location without a bookerPhone (400).", async () => {
+            const bookingType = await createBookingType({
+                meetingTypes: [
+                    {
+                        uid: "mt-phone",
+                        name: "Phone Call",
+                        durationMinutes: 60,
+                        locationOptions: [{ uid: "lo-phone", type: BookingLocationType.PHONE }],
+                    },
+                ],
+            });
+
+            const result = await book(bookingType.slug, { ...validBooking(), meetingTypeUid: "mt-phone", locationOptionUid: "lo-phone" });
+
+            expect(result.status).toBe(400);
+        });
+
+        it("Books a phone location when bookerPhone is supplied.", async () => {
+            const bookingType = await createBookingType({
+                meetingTypes: [
+                    {
+                        uid: "mt-phone",
+                        name: "Phone Call",
+                        durationMinutes: 60,
+                        locationOptions: [{ uid: "lo-phone", type: BookingLocationType.PHONE }],
+                    },
+                ],
+            });
+
+            const result = await book(bookingType.slug, {
+                ...validBooking(),
+                meetingTypeUid: "mt-phone",
+                locationOptionUid: "lo-phone",
+                bookerPhone: "555-123-4567",
+            });
+
+            expect(result.status).toBe(200);
+            expect(result.body.locationType).toBe(BookingLocationType.PHONE);
+            expect(result.body.bookerPhone).toBe("555-123-4567");
+        });
+
+        it("Rejects booking an other location without bookerLocationInstructions (400).", async () => {
+            const bookingType = await createBookingType({
+                meetingTypes: [
+                    {
+                        uid: "mt-other",
+                        name: "In Person",
+                        durationMinutes: 60,
+                        locationOptions: [{ uid: "lo-other", type: BookingLocationType.OTHER }],
+                    },
+                ],
+            });
+
+            const result = await book(bookingType.slug, { ...validBooking(), meetingTypeUid: "mt-other", locationOptionUid: "lo-other" });
+
+            expect(result.status).toBe(400);
+        });
+
+        it("Books an other location when bookerLocationInstructions is supplied.", async () => {
+            const bookingType = await createBookingType({
+                meetingTypes: [
+                    {
+                        uid: "mt-other",
+                        name: "In Person",
+                        durationMinutes: 60,
+                        locationOptions: [{ uid: "lo-other", type: BookingLocationType.OTHER }],
+                    },
+                ],
+            });
+
+            const result = await book(bookingType.slug, {
+                ...validBooking(),
+                meetingTypeUid: "mt-other",
+                locationOptionUid: "lo-other",
+                bookerLocationInstructions: "Meet at the coffee shop on 5th.",
+            });
+
+            expect(result.status).toBe(200);
+            expect(result.body.locationType).toBe(BookingLocationType.OTHER);
+            expect(result.body.bookerLocationInstructions).toBe("Meet at the coffee shop on 5th.");
         });
     });
 
@@ -689,6 +851,88 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         expect(result.status).toBe(200);
         expect(mailTransport.sent).toHaveLength(0);
     });
+
+    describe("host endpoints", () => {
+        describe("GET /host", () => {
+            it("Lists the booking type's bookings for the mailbox owner.", async () => {
+                const bookingType = await createBookingType();
+                const created = await book(bookingType.slug, validBooking());
+                expect(created.status).toBe(200);
+
+                const result = await request(server.getApplication())
+                    .get(`${baseUrl}/host?bookingTypeUid=${bookingType.uid}`)
+                    .set("Authorization", "jwt " + ownerToken);
+
+                expect(result.status).toBe(200);
+                expect(result.body).toHaveLength(1);
+                expect(result.body[0].uid).toBe(created.body.uid);
+            });
+
+            it("Rejects a caller without access to the booking type's mailbox (403).", async () => {
+                const bookingType = await createBookingType();
+
+                const result = await request(server.getApplication())
+                    .get(`${baseUrl}/host?bookingTypeUid=${bookingType.uid}`)
+                    .set("Authorization", "jwt " + otherUserToken);
+
+                expect(result.status).toBe(403);
+            });
+        });
+
+        describe("POST /host/:uid/location", () => {
+            it("Lets the mailbox owner set a video booking's location URL.", async () => {
+                const bookingType = await createBookingType();
+                const created = await book(bookingType.slug, validBooking());
+
+                const result = await request(server.getApplication())
+                    .post(`${baseUrl}/host/${created.body.uid}/location`)
+                    .set("Authorization", "jwt " + ownerToken)
+                    .send({ locationVideoUrl: "https://meet.example.com/new" });
+
+                expect(result.status).toBe(200);
+                expect(result.body.locationVideoUrl).toBe("https://meet.example.com/new");
+            });
+
+            it("Rejects a caller without access to the booking's mailbox (403).", async () => {
+                const bookingType = await createBookingType();
+                const created = await book(bookingType.slug, validBooking());
+
+                const result = await request(server.getApplication())
+                    .post(`${baseUrl}/host/${created.body.uid}/location`)
+                    .set("Authorization", "jwt " + otherUserToken)
+                    .send({ locationVideoUrl: "https://meet.example.com/new" });
+
+                expect(result.status).toBe(403);
+            });
+
+            it("Rejects setting a video URL on a booking whose location is not video (400).", async () => {
+                const bookingType = await createBookingType({
+                    meetingTypes: [
+                        {
+                            uid: "mt-phone",
+                            name: "Phone Call",
+                            durationMinutes: 60,
+                            locationOptions: [{ uid: "lo-phone", type: BookingLocationType.PHONE }],
+                        },
+                    ],
+                });
+                const created = await book(bookingType.slug, {
+                    ...validBooking(),
+                    meetingTypeUid: "mt-phone",
+                    locationOptionUid: "lo-phone",
+                    bookerPhone: "555-123-4567",
+                });
+
+                const result = await request(server.getApplication())
+                    .post(`${baseUrl}/host/${created.body.uid}/location`)
+                    .set("Authorization", "jwt " + ownerToken)
+                    .send({ locationVideoUrl: "https://meet.example.com/new" });
+
+                expect(result.status).toBe(400);
+            });
+        });
+    });
+
     bookingSecuritySuite({
         app: () => server.getApplication(),
         baseUrl,

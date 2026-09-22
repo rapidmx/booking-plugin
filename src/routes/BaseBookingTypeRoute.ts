@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Jean-Philippe Steinmetz. All rights reserved.
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
+import * as crypto from "crypto";
 import { ApiError, type JWTUser } from "@rapidrest/core";
 import {
     ACLAction,
@@ -93,6 +94,28 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
         }
     }
 
+    /**
+     * Assigns `crypto.randomUUID()` to any meeting type / location option in `o.meetingTypes` missing a `uid`,
+     * in place - the same in-place-mutation style `normalizeSlugOf()` uses for `slug`. A uid is never trusted as
+     * caller-*chosen* identity (a client could otherwise mint colliding or spoofed ones), only as
+     * caller-*preserved* identity: an entry that already carries a uid (from a previous read, being edited in
+     * place) keeps it, so `Booking.meetingTypeUid`/location snapshots taken before this edit still resolve. A
+     * no-op when `o.meetingTypes` is absent, which `RepoUtils.update()` then reads as "leave the stored value
+     * alone", same as any other omitted field.
+     */
+    private normalizeMeetingTypeUids(o: Partial<T>): void {
+        for (const meetingType of (o as any).meetingTypes ?? []) {
+            if (!meetingType?.uid) {
+                meetingType.uid = crypto.randomUUID();
+            }
+            for (const option of meetingType?.locationOptions ?? []) {
+                if (!option?.uid) {
+                    option.uid = crypto.randomUUID();
+                }
+            }
+        }
+    }
+
     /** Turns `validateAvailability()`'s message-or-`undefined` result into a `400`. */
     private requireValidAvailability(o: Partial<T>): void {
         const problem: string | undefined = validateAvailability(o);
@@ -129,6 +152,7 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
         const objs: T[] = Array.isArray(obj) ? obj : [obj];
         const seenSlugs: Set<string> = new Set();
         for (const single of objs) {
+            this.normalizeMeetingTypeUids(single);
             this.requireValidAvailability(single);
             await this.requireBookableFolder(single?.mailboxUid, single?.calendarFolderUid, user);
             await this.requireSlugFree(this.normalizeSlugOf(single), single.mailboxUid);
@@ -150,6 +174,7 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
     ): Promise<T> {
         // Validate/normalize only what the caller actually sent - `RepoUtils.update()` is a genuine partial
         // patch on both backends, so an absent `slug`/`availability` means "leave it alone", not "clear it".
+        this.normalizeMeetingTypeUids(obj);
         this.requireValidAvailability(obj);
         const slugSent: boolean = (obj as any).slug !== undefined;
         if (slugSent) {

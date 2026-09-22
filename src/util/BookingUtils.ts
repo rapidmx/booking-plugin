@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Jean-Philippe Steinmetz. All rights reserved.
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
-import { BookingAvailabilityWindow, BookingType } from "../models/types.js";
+import { BookingAvailabilityWindow, BookingLocationOption, BookingLocationType, BookingMeetingType, BookingType } from "../models/types.js";
 import { convertLocalToUtc, type OccurrenceWindow } from "@rapidmx/restapi";
 
 const MS_PER_MINUTE = 60_000;
@@ -25,6 +25,16 @@ export const MAX_AVAILABILITY_WINDOWS = 50;
 
 /** The most `dateOverrides` entries a booking type may have - a year of daily overrides plus a leap day. */
 export const MAX_DATE_OVERRIDES = 366;
+
+/** The most `meetingTypes` a single booking type may offer. */
+export const MAX_MEETING_TYPES = 20;
+
+/** The most `locationOptions` a single meeting type may offer. */
+export const MAX_LOCATION_OPTIONS = 10;
+
+const MAX_MEETING_TYPE_NAME_LENGTH = 200;
+const MAX_LOCATION_LABEL_LENGTH = 200;
+const MAX_VIDEO_URL_LENGTH = 2000;
 
 /** Safety net on how many candidate slots one `generateCandidateSlots()` call collects, whatever is stored (rows written
  * before `validateAvailability()` had its limits, or straight to the database). Generation stops after the local day
@@ -66,6 +76,70 @@ function formatLocalDate(parts: LocalDateParts): string {
     return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
 }
 
+const isIntegerIn = (value: unknown, min: number, max: number): boolean =>
+    typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
+
+/** A non-empty string of at most `maxLength` characters. */
+const isBoundedString = (value: unknown, maxLength: number): boolean => typeof value === "string" && value.length > 0 && value.length <= maxLength;
+
+/**
+ * Validates one `BookingType.meetingTypes` array - each meeting type's own shape, its `locationOptions`, and
+ * uid uniqueness across the whole booking type (a meeting type and a location option share the same `uid`
+ * namespace only in the sense that both must be unique among themselves; a meeting type's uid and one of its
+ * own location options' uids are unrelated). Broken out of `validateAvailability()` purely for readability -
+ * still a pure function returning a message or `undefined`, called only from there.
+ */
+function validateMeetingTypes(meetingTypes: unknown): string | undefined {
+    if (!Array.isArray(meetingTypes) || meetingTypes.length === 0 || meetingTypes.length > MAX_MEETING_TYPES) {
+        return `meetingTypes must be a list of 1 to ${MAX_MEETING_TYPES} meeting types.`;
+    }
+    const seenMeetingTypeUids: Set<string> = new Set();
+    for (const meetingType of meetingTypes as Partial<BookingMeetingType>[]) {
+        if (!isBoundedString(meetingType?.name, MAX_MEETING_TYPE_NAME_LENGTH)) {
+            return `Each meeting type's name must be a string of 1 to ${MAX_MEETING_TYPE_NAME_LENGTH} characters.`;
+        }
+        if (!isIntegerIn(meetingType?.durationMinutes, MIN_SLOT_MINUTES, MINUTES_PER_DAY)) {
+            return `Each meeting type's durationMinutes must be a whole number of minutes from ${MIN_SLOT_MINUTES} to ${MINUTES_PER_DAY}.`;
+        }
+        if (meetingType?.uid !== undefined) {
+            if (typeof meetingType.uid !== "string" || !meetingType.uid) {
+                return "Each meeting type's uid, when supplied, must be a non-empty string.";
+            }
+            if (seenMeetingTypeUids.has(meetingType.uid)) {
+                return `meetingTypes lists the uid '${meetingType.uid}' more than once.`;
+            }
+            seenMeetingTypeUids.add(meetingType.uid);
+        }
+
+        const locationOptions: unknown = meetingType?.locationOptions;
+        if (!Array.isArray(locationOptions) || locationOptions.length === 0 || locationOptions.length > MAX_LOCATION_OPTIONS) {
+            return `Each meeting type's locationOptions must be a list of 1 to ${MAX_LOCATION_OPTIONS} locations.`;
+        }
+        const seenLocationUids: Set<string> = new Set();
+        for (const option of locationOptions as Partial<BookingLocationOption>[]) {
+            if (!Object.values(BookingLocationType).includes(option?.type as BookingLocationType)) {
+                return "Each location option's type must be one of: " + Object.values(BookingLocationType).join(", ") + ".";
+            }
+            if (option?.label !== undefined && !isBoundedString(option.label, MAX_LOCATION_LABEL_LENGTH)) {
+                return `A location option's label, when supplied, must be a string of 1 to ${MAX_LOCATION_LABEL_LENGTH} characters.`;
+            }
+            if (option?.videoUrl !== undefined && !isBoundedString(option.videoUrl, MAX_VIDEO_URL_LENGTH)) {
+                return `A location option's videoUrl, when supplied, must be a string of 1 to ${MAX_VIDEO_URL_LENGTH} characters.`;
+            }
+            if (option?.uid !== undefined) {
+                if (typeof option.uid !== "string" || !option.uid) {
+                    return "Each location option's uid, when supplied, must be a non-empty string.";
+                }
+                if (seenLocationUids.has(option.uid)) {
+                    return `A meeting type's locationOptions lists the uid '${option.uid}' more than once.`;
+                }
+                seenLocationUids.add(option.uid);
+            }
+        }
+    }
+    return undefined;
+}
+
 /**
  * Validates a `BookingType`'s availability configuration, returning a human-readable problem description or
  * `undefined` when everything is well-formed. Returns a message rather than throwing so it stays a pure
@@ -76,10 +150,11 @@ export function validateAvailability(bookingType: Partial<BookingType>): string 
     if (bookingType.timezone !== undefined && convertLocalToUtc(2026, 1, 1, 12, 0, 0, bookingType.timezone) === undefined) {
         return `'${bookingType.timezone}' is not a recognized IANA timezone identifier.`;
     }
-    const isIntegerIn = (value: unknown, min: number, max: number): boolean =>
-        typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
-    if (bookingType.durationMinutes !== undefined && !isIntegerIn(bookingType.durationMinutes, MIN_SLOT_MINUTES, MINUTES_PER_DAY)) {
-        return `durationMinutes must be a whole number of minutes from ${MIN_SLOT_MINUTES} to ${MINUTES_PER_DAY}.`;
+    if (bookingType.meetingTypes !== undefined) {
+        const problem: string | undefined = validateMeetingTypes(bookingType.meetingTypes);
+        if (problem) {
+            return problem;
+        }
     }
     if (
         bookingType.slotIntervalMinutes !== undefined &&
@@ -166,12 +241,20 @@ export function validateAvailability(bookingType: Partial<BookingType>): string 
  * *end* is its start plus `durationMinutes` of real elapsed time, so a 30-minute appointment is always 30 real
  * minutes even when the transition itself falls inside it.
  *
+ * `durationMinutes` is a caller-supplied parameter rather than read off `bookingType` because a booking type
+ * now offers several `meetingTypes`, each with its own duration, while everything else here (availability,
+ * buffers, notice, window) is shared. Callers pass the selected meeting type's own duration for a new booking,
+ * or an existing booking's `endDate - startDate` when re-deriving its original slot for a reschedule - see
+ * `BaseBookingRoute.reschedule()`, which deliberately does not re-look the duration up from `meetingTypes` so
+ * that editing or removing a meeting type never silently changes an existing booking's length.
+ *
  * @param bookingType The offering whose availability is being expanded.
+ * @param durationMinutes How long the produced slots should be, in minutes.
  * @param from The inclusive start of the caller's requested window.
  * @param to The exclusive end of the caller's requested window.
  * @param now The current instant, against which `minimumNoticeMinutes`/`bookingWindowDays` are applied.
  */
-export function generateCandidateSlots(bookingType: BookingType, from: Date, to: Date, now: Date): OccurrenceWindow[] {
+export function generateCandidateSlots(bookingType: BookingType, durationMinutes: number, from: Date, to: Date, now: Date): OccurrenceWindow[] {
     const earliestStartMs: number = Math.max(from.getTime(), now.getTime() + bookingType.minimumNoticeMinutes * MS_PER_MINUTE);
     const latestStartMs: number = Math.min(to.getTime(), now.getTime() + bookingType.bookingWindowDays * MINUTES_PER_DAY * MS_PER_MINUTE);
     if (earliestStartMs >= latestStartMs) {
@@ -187,9 +270,9 @@ export function generateCandidateSlots(bookingType: BookingType, from: Date, to:
     }
 
     const overridesByDate = new Map((bookingType.dateOverrides ?? []).map((override) => [override.date, override.windows ?? []]));
-    const intervalMinutes: number = bookingType.slotIntervalMinutes ?? bookingType.durationMinutes;
-    // A stored zero/fractional/non-numeric step would loop (near-)forever below - such a row offers nothing.
-    if (!(Number(intervalMinutes) >= 1) || !(Number(bookingType.durationMinutes) >= 1)) {
+    const intervalMinutes: number = bookingType.slotIntervalMinutes ?? durationMinutes;
+    // A zero/fractional/non-numeric step would loop (near-)forever below - such a call offers nothing.
+    if (!(Number(intervalMinutes) >= 1) || !(Number(durationMinutes) >= 1)) {
         return [];
     }
     const slots: OccurrenceWindow[] = [];
@@ -215,7 +298,7 @@ export function generateCandidateSlots(bookingType: BookingType, from: Date, to:
         ).slice(0, MAX_AVAILABILITY_WINDOWS);
 
         for (const window of windows) {
-            for (let minute = window.startMinute; minute + bookingType.durationMinutes <= window.endMinute; minute += intervalMinutes) {
+            for (let minute = window.startMinute; minute + durationMinutes <= window.endMinute; minute += intervalMinutes) {
                 const start: Date | undefined = convertLocalToUtc(
                     parts.year,
                     parts.month,
@@ -236,7 +319,7 @@ export function generateCandidateSlots(bookingType: BookingType, from: Date, to:
                     continue;
                 }
                 seenStarts.add(start.getTime());
-                slots.push({ start, end: new Date(start.getTime() + bookingType.durationMinutes * MS_PER_MINUTE) });
+                slots.push({ start, end: new Date(start.getTime() + durationMinutes * MS_PER_MINUTE) });
             }
         }
         if (slots.length >= MAX_CANDIDATE_SLOTS) {

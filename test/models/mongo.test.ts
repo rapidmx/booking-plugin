@@ -4,7 +4,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 import "reflect-metadata";
 import { isMailboxScopedData } from "@rapidmx/restapi";
-import { BookingStatus } from "../../src/models/types.js";
+import { BookingLocationType, BookingStatus } from "../../src/models/types.js";
 import { BookingMongo } from "../../src/models/mongo/BookingMongo.js";
 import { BookingTypeMongo } from "../../src/models/mongo/BookingTypeMongo.js";
 import { BookingProfileMongo } from "../../src/models/mongo/BookingProfileMongo.js";
@@ -19,7 +19,7 @@ describe("Mongo model default construction", () => {
         expect(obj.name).toBe("");
         expect(obj.description).toBeUndefined();
         expect(obj.hostDisplayName).toBe("");
-        expect(obj.durationMinutes).toBe(30);
+        expect(obj.meetingTypes).toEqual([]);
         expect(obj.timezone).toBe("UTC");
         expect(obj.availability).toEqual([]);
         expect(obj.dateOverrides).toEqual([]);
@@ -41,7 +41,9 @@ describe("Mongo model default construction", () => {
             name: "Intro Call",
             description: "A quick chat.",
             hostDisplayName: "Ada Lovelace",
-            durationMinutes: 45,
+            meetingTypes: [
+                { uid: "mt-1", name: "Intro Call", durationMinutes: 45, locationOptions: [{ uid: "lo-1", type: BookingLocationType.VIDEO }] },
+            ],
             timezone: "America/New_York",
             availability: [{ dayOfWeek: 1, startMinute: 540, endMinute: 660 }],
             dateOverrides: [{ date: "2026-07-04", windows: [] }],
@@ -61,7 +63,9 @@ describe("Mongo model default construction", () => {
         expect(obj.name).toBe("Intro Call");
         expect(obj.description).toBe("A quick chat.");
         expect(obj.hostDisplayName).toBe("Ada Lovelace");
-        expect(obj.durationMinutes).toBe(45);
+        expect(obj.meetingTypes).toEqual([
+            { uid: "mt-1", name: "Intro Call", durationMinutes: 45, locationOptions: [{ uid: "lo-1", type: BookingLocationType.VIDEO }] },
+        ]);
         expect(obj.timezone).toBe("America/New_York");
         expect(obj.availability).toEqual([{ dayOfWeek: 1, startMinute: 540, endMinute: 660 }]);
         expect(obj.dateOverrides).toEqual([{ date: "2026-07-04", windows: [] }]);
@@ -82,6 +86,13 @@ describe("Mongo model default construction", () => {
         expect(obj.mailboxUid).toBe("");
         expect(obj.folderUid).toBe("");
         expect(obj.calendarEventUid).toBe("");
+        expect(obj.meetingTypeUid).toBe("");
+        expect(obj.meetingTypeName).toBe("");
+        expect(obj.locationType).toBe(BookingLocationType.OTHER);
+        expect(obj.locationLabel).toBeUndefined();
+        expect(obj.bookerPhone).toBeUndefined();
+        expect(obj.locationVideoUrl).toBeUndefined();
+        expect(obj.bookerLocationInstructions).toBeUndefined();
         expect(obj.bookerName).toBe("");
         expect(obj.bookerEmail).toBe("");
         expect(obj.bookerNotes).toBeUndefined();
@@ -100,6 +111,11 @@ describe("Mongo model default construction", () => {
             mailboxUid: "mailbox-1",
             folderUid: "folder-1",
             calendarEventUid: "event-1",
+            meetingTypeUid: "mt-1",
+            meetingTypeName: "Intro Call",
+            locationType: BookingLocationType.PHONE,
+            locationLabel: "Phone",
+            bookerPhone: "+1-555-0100",
             bookerName: "Grace Hopper",
             bookerEmail: "grace@example.com",
             bookerNotes: "Looking forward to it.",
@@ -115,6 +131,11 @@ describe("Mongo model default construction", () => {
         expect(obj.mailboxUid).toBe("mailbox-1");
         expect(obj.folderUid).toBe("folder-1");
         expect(obj.calendarEventUid).toBe("event-1");
+        expect(obj.meetingTypeUid).toBe("mt-1");
+        expect(obj.meetingTypeName).toBe("Intro Call");
+        expect(obj.locationType).toBe(BookingLocationType.PHONE);
+        expect(obj.locationLabel).toBe("Phone");
+        expect(obj.bookerPhone).toBe("+1-555-0100");
         expect(obj.bookerName).toBe("Grace Hopper");
         expect(obj.bookerEmail).toBe("grace@example.com");
         expect(obj.bookerNotes).toBe("Looking forward to it.");

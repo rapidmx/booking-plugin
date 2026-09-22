@@ -50,7 +50,7 @@ function bookingType(overrides: Record<string, unknown> = {}) {
         name: "Intro Call",
         description: "",
         hostDisplayName: "My Mail",
-        durationMinutes: 30,
+        meetingTypes: [{ uid: "mt1", name: "30 Minute Meeting", durationMinutes: 30, locationOptions: [{ uid: "lo1", type: "video" }] }],
         timezone: "America/New_York",
         availability: [{ dayOfWeek: 1, startMinute: 540, endMinute: 1020 }],
         dateOverrides: [],
@@ -70,6 +70,9 @@ function mockShell(extra?: (url: string, init?: RequestInit) => Response | undef
         if (custom) return custom;
         if (url.startsWith("/api/mail/mailboxes/auto-provision")) return jsonResponse(404, { message: "not enabled" });
         if (url.startsWith("/api/mail/mailboxes")) return jsonResponse(200, mailboxes);
+        // The page's "Upcoming bookings" section loads on every render; tests that care about it override
+        // this URL themselves via `extra`, everything else gets an empty list.
+        if (url.startsWith("/api/mail/bookings/host")) return jsonResponse(200, []);
         throw new Error(`unexpected ${init?.method ?? "GET"} ${url}`);
     });
 }
@@ -504,6 +507,83 @@ describe("BookingTypeDetailPage", () => {
             expect(putBody(fetchMock)).toMatchObject({ mailboxUid: "mb2", calendarFolderUid: "f-cal2" });
             expect(location.href).toBe("");
             expect(mailboxField()).toHaveValue("mb2");
+        });
+    });
+
+    describe("Upcoming bookings", () => {
+        const booking = (overrides: Record<string, unknown> = {}) => ({
+            uid: "b1",
+            mailboxUid: "mb1",
+            bookingTypeSlug: "intro-call",
+            name: "Intro Call",
+            hostDisplayName: "My Mail",
+            meetingTypeUid: "mt1",
+            meetingTypeName: "30 Minute Meeting",
+            locationType: "video",
+            bookerName: "Grace Hopper",
+            bookerEmail: "grace@example.com",
+            startDate: "2026-09-09T13:00:00.000Z",
+            endDate: "2026-09-09T13:30:00.000Z",
+            status: "confirmed",
+            ...overrides,
+        });
+
+        it("shows an empty state when there are no bookings", async () => {
+            mockShell((url) => (url === "/api/mail/booking-types/bt1" ? jsonResponse(200, bookingType()) : undefined));
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+            expect(await screen.findByText("No bookings yet.")).toBeInTheDocument();
+        });
+
+        it("lists a booking with its time, meeting type, and booker", async () => {
+            mockShell((url) => {
+                if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
+                if (url.startsWith("/api/mail/bookings/host")) return jsonResponse(200, [booking()]);
+                return undefined;
+            });
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+
+            expect(await screen.findByText(/30 Minute Meeting with Grace Hopper \(grace@example.com\)/)).toBeInTheDocument();
+        });
+
+        it("shows a phone booking's number and an other booking's instructions", async () => {
+            mockShell((url) => {
+                if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
+                if (url.startsWith("/api/mail/bookings/host")) {
+                    return jsonResponse(200, [
+                        booking({ uid: "b-phone", locationType: "phone", bookerPhone: "+1-555-0100" }),
+                        booking({ uid: "b-other", locationType: "other", bookerLocationInstructions: "Meet at the lobby" }),
+                    ]);
+                }
+                return undefined;
+            });
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+
+            expect(await screen.findByText("Phone: +1-555-0100")).toBeInTheDocument();
+            expect(screen.getByText("Other: Meet at the lobby")).toBeInTheDocument();
+        });
+
+        it("saves a video booking's meeting URL", async () => {
+            const fetchMock = mockShell((url, init) => {
+                if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
+                if (url === "/api/mail/bookings/host?bookingTypeUid=bt1") return jsonResponse(200, [booking()]);
+                if (url === "/api/mail/bookings/host/b1/location" && init?.method === "POST") {
+                    return jsonResponse(200, booking({ locationVideoUrl: "https://example.com/room" }));
+                }
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+            const urlField = await screen.findByLabelText("Video URL (not set)");
+
+            await user.type(urlField, "https://example.com/room");
+            await user.click(screen.getByRole("button", { name: "Save video URL" }));
+
+            await vi.waitFor(() =>
+                expect(fetchMock).toHaveBeenCalledWith(
+                    "/api/mail/bookings/host/b1/location",
+                    expect.objectContaining({ method: "POST", body: JSON.stringify({ locationVideoUrl: "https://example.com/room" }) }),
+                ),
+            );
         });
     });
 

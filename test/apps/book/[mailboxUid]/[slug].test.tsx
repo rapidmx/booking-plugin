@@ -15,7 +15,7 @@ const publicBookingType = {
     name: "30 Minute Intro Call",
     description: "Let's chat",
     hostDisplayName: "Jane Host",
-    durationMinutes: 30,
+    meetingTypes: [{ uid: "mt1", name: "30 Minute Intro Call", durationMinutes: 30, locationOptions: [{ uid: "lo1", type: "video" }] }],
     timezone: "America/New_York",
     requiresApproval: false,
     minimumNoticeMinutes: 60,
@@ -412,6 +412,9 @@ describe("PublicBookingPage", () => {
                     bookingTypeSlug: "intro-call",
                     name: "30 Minute Intro Call",
                     hostDisplayName: "Jane Host",
+                    meetingTypeUid: "mt1",
+                    meetingTypeName: "30 Minute Intro Call",
+                    locationType: "video",
                     bookerName: "Bob",
                     bookerEmail: "bob@example.com",
                     startDate: slot1.start,
@@ -435,18 +438,20 @@ describe("PublicBookingPage", () => {
         expect(await screen.findByText("You’re booked!")).toBeInTheDocument();
         expect(screen.getByText(/Save this link to cancel or reschedule later/)).toBeInTheDocument();
         expect(screen.getByRole("link", { name: /book\/manage\/tok123/ })).toBeInTheDocument();
-        // The confirmation names the booking type and host, and the visitor's chosen time.
+        // The confirmation names the meeting type and host, and the visitor's chosen time.
         const when = new Date(slot1.start).toLocaleString();
         expect(screen.getByText(`30 Minute Intro Call with Jane Host on ${when}.`)).toBeInTheDocument();
         // The selection form and the time list give way to the confirmation; the host stays in view.
         expect(screen.queryByLabelText("Your name")).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Confirm booking" })).not.toBeInTheDocument();
         expect(screen.getByRole("heading", { level: 1, name: "Jane Host" })).toBeInTheDocument();
-        // Booked through the mailbox-scoped endpoint, with the visitor's own zone.
+        // Booked through the mailbox-scoped endpoint, with the visitor's own zone and chosen meeting type/location.
         const post = fetchMock.mock.calls.find(([, init]: any) => init?.method === "POST");
         expect(post?.[0]).toBe("/api/mail/bookings/types/jane@example.com/intro-call");
         expect(JSON.parse((post?.[1] as RequestInit).body as string)).toEqual({
             start: slot1.start,
+            meetingTypeUid: "mt1",
+            locationOptionUid: "lo1",
             bookerName: "Bob",
             bookerEmail: "bob@example.com",
             bookerNotes: "Looking forward to it",
@@ -541,6 +546,9 @@ describe("PublicBookingPage", () => {
                     bookingTypeSlug: "intro-call",
                     name: "30 Minute Intro Call",
                     hostDisplayName: "Jane Host",
+                    meetingTypeUid: "mt1",
+                    meetingTypeName: "30 Minute Intro Call",
+                    locationType: "video",
                     bookerName: "Bob",
                     bookerEmail: "bob@example.com",
                     startDate: slot1.start,
@@ -563,5 +571,84 @@ describe("PublicBookingPage", () => {
 
         expect(await screen.findByText("You’re booked!")).toBeInTheDocument();
         expect(screen.queryByText(/Save this link/)).not.toBeInTheDocument();
+    });
+
+    describe("multiple meeting types and locations", () => {
+        const twoMeetingTypes = {
+            ...publicBookingType,
+            meetingTypes: [
+                { uid: "mt1", name: "15 Min Chat", durationMinutes: 15, locationOptions: [{ uid: "lo1", type: "video" }] },
+                {
+                    uid: "mt2",
+                    name: "60 Min Deep Dive",
+                    durationMinutes: 60,
+                    locationOptions: [
+                        { uid: "lo2", type: "phone" },
+                        { uid: "lo3", type: "other", label: "In person" },
+                    ],
+                },
+            ],
+        };
+
+        it("offers a meeting type selector when there's more than one, and reloads slots for the chosen one", async () => {
+            const requested: string[] = [];
+            mockPage((url) => {
+                if (url === "/api/mail/bookings/types/jane@example.com/intro-call") return jsonResponse(200, twoMeetingTypes);
+                if (url.startsWith("/api/mail/bookings/types/jane@example.com/intro-call/slots?")) {
+                    requested.push(url);
+                    return jsonResponse(200, [slot1]);
+                }
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<PublicBookingPage params={{ mailboxUid: "jane@example.com", slug: "intro-call" }} />);
+            await screen.findByText("30 Minute Intro Call");
+
+            expect(requested[0]).toContain("meetingTypeUid=mt1");
+            await user.click(screen.getByRole("radio", { name: /60 Min Deep Dive/ }));
+
+            await vi.waitFor(() => expect(requested[requested.length - 1]).toContain("meetingTypeUid=mt2"));
+        });
+
+        it("requires a phone number before submitting a phone-location booking", async () => {
+            mockPage((url) => {
+                if (url === "/api/mail/bookings/types/jane@example.com/intro-call") return jsonResponse(200, twoMeetingTypes);
+                if (url.startsWith("/api/mail/bookings/types/jane@example.com/intro-call/slots?")) return jsonResponse(200, [slot1]);
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<PublicBookingPage params={{ mailboxUid: "jane@example.com", slug: "intro-call" }} />);
+            await screen.findByText("30 Minute Intro Call");
+
+            await user.click(screen.getByRole("radio", { name: /60 Min Deep Dive/ }));
+            await user.click(await screen.findByRole("button", { name: new Date(slot1.start).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) }));
+            await user.type(screen.getByLabelText("Your name"), "Bob");
+            await user.type(screen.getByLabelText("Your email"), "bob@example.com");
+            await user.click(screen.getByRole("radio", { name: "Phone" }));
+            await user.click(screen.getByRole("button", { name: "Confirm booking" }));
+
+            expect(await screen.findByText("Please enter a phone number.")).toBeInTheDocument();
+        });
+
+        it("shows the 'Other' location's custom label and requires instructions before submitting", async () => {
+            mockPage((url) => {
+                if (url === "/api/mail/bookings/types/jane@example.com/intro-call") return jsonResponse(200, twoMeetingTypes);
+                if (url.startsWith("/api/mail/bookings/types/jane@example.com/intro-call/slots?")) return jsonResponse(200, [slot1]);
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<PublicBookingPage params={{ mailboxUid: "jane@example.com", slug: "intro-call" }} />);
+            await screen.findByText("30 Minute Intro Call");
+
+            await user.click(screen.getByRole("radio", { name: /60 Min Deep Dive/ }));
+            await user.click(await screen.findByRole("button", { name: new Date(slot1.start).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) }));
+            expect(screen.getByRole("radio", { name: "In person" })).toBeInTheDocument();
+            await user.type(screen.getByLabelText("Your name"), "Bob");
+            await user.type(screen.getByLabelText("Your email"), "bob@example.com");
+            await user.click(screen.getByRole("radio", { name: "In person" }));
+            await user.click(screen.getByRole("button", { name: "Confirm booking" }));
+
+            expect(await screen.findByText("Please describe how to reach you.")).toBeInTheDocument();
+        });
     });
 });

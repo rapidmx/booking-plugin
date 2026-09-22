@@ -42,6 +42,61 @@ export interface BookingDateOverride {
     windows: BookingAvailabilityWindow[];
 }
 
+/** The kind of location a `BookingLocationOption` offers a booker. */
+export enum BookingLocationType {
+    /** The booker types their own phone number when booking; the host calls them. */
+    PHONE = "phone",
+
+    /** A video call. `videoUrl` is set by the host - either at setup time or afterward, per booking, via the
+     * host-only `POST /host/:uid/location` endpoint - and is shown to the booker only after they've booked. */
+    VIDEO = "video",
+
+    /** Anything else: the booker types free-text instructions of their own (an address, a coffee shop name,
+     * their own dial-in - whatever the host's "Other" option is meant to cover). */
+    OTHER = "other",
+}
+
+/**
+ * One location a `BookingMeetingType` can be booked at, chosen by the booker at booking time from the list the
+ * host configured. `uid` is this option's stable identity, snapshotted onto every `Booking` made against it
+ * (as `Booking.locationLabel`/`locationType`) so a later edit to the option never reattributes a past booking.
+ */
+export interface BookingLocationOption {
+    /** Stable within its `BookingMeetingType`. Assigned server-side (`BaseBookingTypeRoute`) when omitted on
+     * write; a caller may send back a uid from a previous read to edit that same option in place. */
+    uid: string;
+
+    type: BookingLocationType;
+
+    /** An optional display override, e.g. "Zoom" or "My office" in place of the generic per-`type` label. */
+    label?: string;
+
+    /** `VIDEO` only: the meeting URL shown to the booker after they've booked. Optional at setup time - a
+     * booking made against an option with no `videoUrl` snapshots `Booking.locationVideoUrl` as unset, and the
+     * host can set or change it afterward for that one booking via `POST /host/:uid/location`. */
+    videoUrl?: string;
+}
+
+/**
+ * One offering a `BookingType` can be booked as, e.g. "15 Minute Chat" or "60 Minute Consultation" on the same
+ * booking link - each with its own `durationMinutes` and its own `locationOptions`, while the owning
+ * `BookingType`'s availability (`availability`/`dateOverrides`/buffers/notice/window) is shared across all of
+ * them. `uid` is assigned the same way `BookingLocationOption.uid` is, and is snapshotted onto every `Booking`
+ * made against it (`Booking.meetingTypeUid`/`meetingTypeName`) for the same reason.
+ */
+export interface BookingMeetingType {
+    uid: string;
+
+    name: string;
+
+    /** How long a single booking of this meeting type lasts, in minutes. */
+    durationMinutes: number;
+
+    /** The locations a booker may choose from when booking this meeting type. At least one is required - a
+     * meeting type with none would be unbookable. */
+    locationOptions: BookingLocationOption[];
+}
+
 /**
  * Defines a single bookable offering owned by a `Mailbox` - the Calendly-style "30 minute intro call" a
  * completely unauthenticated visitor can pick a slot from and book. Availability is expressed as recurring
@@ -83,8 +138,9 @@ export interface BookingType extends BaseEntity {
      * exact remedy `BaseFolderRoute`'s doc comment prescribes for this situation. */
     hostDisplayName: string;
 
-    /** How long a single booking lasts, in minutes. */
-    durationMinutes: number;
+    /** The offerings this booking link can be booked as - each with its own duration and location options,
+     * sharing this booking type's own availability. At least one is required. */
+    meetingTypes: BookingMeetingType[];
 
     /** The IANA timezone identifier `availability`/`dateOverrides` are authored in. Validated on write by
      * round-tripping it through `convertLocalToUtc()`, which returns `undefined` for a name ICU doesn't know. */
@@ -146,6 +202,33 @@ export interface Booking extends BaseEntity {
     /** The unique identifier of the host `Mailbox`, denormalized from the booking type so the host's bookings
      * can be listed without a join. */
     mailboxUid: string;
+
+    /** The unique identifier of the `BookingMeetingType` (within `bookingTypeUid.meetingTypes`) this was booked
+     * as. Not re-resolved against the live meeting type after booking - see `meetingTypeName`. */
+    meetingTypeUid: string;
+
+    /** The meeting type's `name` at the moment of booking, snapshotted so a later rename (or removal) of the
+     * meeting type never changes what a past booking is shown as. */
+    meetingTypeName: string;
+
+    /** The kind of location the booker chose, snapshotted from the `BookingLocationOption` they picked. */
+    locationType: BookingLocationType;
+
+    /** The location option's `label` at the moment of booking, if it had one. Snapshotted for the same reason
+     * as `meetingTypeName`. */
+    locationLabel?: string;
+
+    /** Set when `locationType` is `PHONE`: the phone number the booker typed in. */
+    bookerPhone?: string;
+
+    /** Set when `locationType` is `VIDEO` and a URL is known: either the location option's `videoUrl` at
+     * booking time, or one the host has set afterward for this specific booking via `POST /host/:uid/location`
+     * - which always wins, since it is strictly more specific than the option's own default. Unset means no URL
+     * has been shared with the booker yet. */
+    locationVideoUrl?: string;
+
+    /** Set when `locationType` is `OTHER`: the free-text instructions the booker typed in. */
+    bookerLocationInstructions?: string;
 
     /** The unique identifier of the `Folder` (of type `CALENDAR`) holding `calendarEventUid`. */
     folderUid: string;

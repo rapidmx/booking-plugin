@@ -3,8 +3,19 @@
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
 import { generateCandidateSlots, normalizeSlug, subtractBusy, validateAvailability } from "../../src/util/BookingUtils.js";
-import { BookingType } from "../../src/models/types.js";
+import { BookingLocationType, BookingMeetingType, BookingType } from "../../src/models/types.js";
 import type { OccurrenceWindow } from "@rapidmx/restapi";
+
+/** The single meeting type every `makeBookingType()` fixture carries by default: 60 minutes, one video option. */
+function makeMeetingType(overrides?: Partial<BookingMeetingType>): BookingMeetingType {
+    return {
+        uid: "mt-1",
+        name: "Intro Call",
+        durationMinutes: 60,
+        locationOptions: [{ uid: "lo-1", type: BookingLocationType.VIDEO, videoUrl: "https://example.com/room" }],
+        ...overrides,
+    };
+}
 
 /** A weekday 09:00-11:00 offering in New York, 60 minutes long, with everything else wide open - the baseline
  * every test varies one field of. Monday(1) through Friday(5). */
@@ -17,7 +28,7 @@ function makeBookingType(overrides?: Partial<BookingType>): BookingType {
         slug: "intro-call",
         name: "Intro Call",
         hostDisplayName: "Ada Lovelace",
-        durationMinutes: 60,
+        meetingTypes: [makeMeetingType()],
         timezone: "America/New_York",
         availability: [1, 2, 3, 4, 5].map((dayOfWeek) => ({ dayOfWeek, startMinute: 540, endMinute: 660 })),
         dateOverrides: [],
@@ -40,6 +51,7 @@ describe("generateCandidateSlots() Tests", () => {
     it("Emits back-to-back slots across a weekly window, converting local minutes to the correct UTC instants.", () => {
         const slots = generateCandidateSlots(
             makeBookingType(),
+            60,
             new Date("2026-06-01T00:00:00.000Z"),
             new Date("2026-06-02T00:00:00.000Z"),
             NOW,
@@ -53,6 +65,7 @@ describe("generateCandidateSlots() Tests", () => {
         // 2026-06-06 is a Saturday, 2026-06-07 a Sunday - neither is in the Mon-Fri availability.
         const slots = generateCandidateSlots(
             makeBookingType(),
+            60,
             new Date("2026-06-06T00:00:00.000Z"),
             new Date("2026-06-08T00:00:00.000Z"),
             NOW,
@@ -63,7 +76,8 @@ describe("generateCandidateSlots() Tests", () => {
 
     it("Honors slotIntervalMinutes independently of durationMinutes.", () => {
         const slots = generateCandidateSlots(
-            makeBookingType({ durationMinutes: 30, slotIntervalMinutes: 15 }),
+            makeBookingType({ slotIntervalMinutes: 15 }),
+            30,
             new Date("2026-06-01T00:00:00.000Z"),
             new Date("2026-06-02T00:00:00.000Z"),
             NOW,
@@ -83,7 +97,8 @@ describe("generateCandidateSlots() Tests", () => {
 
     it("Emits nothing when the duration does not fit inside any window.", () => {
         const slots = generateCandidateSlots(
-            makeBookingType({ durationMinutes: 180 }),
+            makeBookingType(),
+            180,
             new Date("2026-06-01T00:00:00.000Z"),
             new Date("2026-06-02T00:00:00.000Z"),
             NOW,
@@ -100,6 +115,7 @@ describe("generateCandidateSlots() Tests", () => {
 
             const slots = generateCandidateSlots(
                 bookingType,
+                60,
                 new Date("2026-06-01T00:00:00.000Z"),
                 new Date("2026-06-03T00:00:00.000Z"),
                 NOW,
@@ -118,6 +134,7 @@ describe("generateCandidateSlots() Tests", () => {
 
             const slots = generateCandidateSlots(
                 bookingType,
+                60,
                 new Date("2026-06-01T00:00:00.000Z"),
                 new Date("2026-06-02T00:00:00.000Z"),
                 NOW,
@@ -131,6 +148,7 @@ describe("generateCandidateSlots() Tests", () => {
 
             const slots = generateCandidateSlots(
                 bookingType,
+                60,
                 new Date("2026-06-01T00:00:00.000Z"),
                 new Date("2026-06-02T00:00:00.000Z"),
                 NOW,
@@ -146,6 +164,7 @@ describe("generateCandidateSlots() Tests", () => {
             // same 09:00 local window is 14:00Z on the Friday before and 13:00Z on the Monday after.
             const slots = generateCandidateSlots(
                 makeBookingType(),
+                60,
                 new Date("2026-03-06T00:00:00.000Z"),
                 new Date("2026-03-10T00:00:00.000Z"),
                 new Date("2026-03-01T00:00:00.000Z"),
@@ -165,6 +184,7 @@ describe("generateCandidateSlots() Tests", () => {
             // 13:00Z is inside the notice window; 14:00Z is not.
             const slots = generateCandidateSlots(
                 makeBookingType({ minimumNoticeMinutes: 120 }),
+                60,
                 new Date("2026-06-01T00:00:00.000Z"),
                 new Date("2026-06-02T00:00:00.000Z"),
                 new Date("2026-06-01T12:00:00.000Z"),
@@ -176,6 +196,7 @@ describe("generateCandidateSlots() Tests", () => {
         it("Drops slots beyond bookingWindowDays even when the caller asks for a wider window.", () => {
             const slots = generateCandidateSlots(
                 makeBookingType({ bookingWindowDays: 1 }),
+                60,
                 new Date("2026-06-01T00:00:00.000Z"),
                 new Date("2026-06-30T00:00:00.000Z"),
                 new Date("2026-06-01T00:00:00.000Z"),
@@ -187,6 +208,7 @@ describe("generateCandidateSlots() Tests", () => {
         it("Returns nothing when the effective window is empty.", () => {
             const slots = generateCandidateSlots(
                 makeBookingType(),
+                60,
                 new Date("2026-06-02T00:00:00.000Z"),
                 new Date("2026-06-01T00:00:00.000Z"),
                 NOW,
@@ -198,6 +220,7 @@ describe("generateCandidateSlots() Tests", () => {
         it("Returns nothing when the timezone is not one Intl recognizes.", () => {
             const slots = generateCandidateSlots(
                 makeBookingType({ timezone: "Mars/Olympus_Mons" }),
+                60,
                 new Date("2026-06-01T00:00:00.000Z"),
                 new Date("2026-06-02T00:00:00.000Z"),
                 NOW,
@@ -209,6 +232,7 @@ describe("generateCandidateSlots() Tests", () => {
         it("Treats a missing availability array as no availability at all.", () => {
             const slots = generateCandidateSlots(
                 makeBookingType({ availability: undefined, dateOverrides: undefined }),
+                60,
                 new Date("2026-06-01T00:00:00.000Z"),
                 new Date("2026-06-02T00:00:00.000Z"),
                 NOW,
@@ -271,8 +295,55 @@ describe("validateAvailability() Tests", () => {
         expect(validateAvailability({ timezone: "Mars/Olympus_Mons" })).toMatch(/not a recognized IANA timezone/i);
     });
 
-    it("Rejects a non-positive durationMinutes.", () => {
-        expect(validateAvailability({ durationMinutes: 0 })).toMatch(/durationMinutes/);
+    it("Rejects an empty meetingTypes array.", () => {
+        expect(validateAvailability({ meetingTypes: [] })).toMatch(/meetingTypes/);
+    });
+
+    it("Rejects a meeting type with no name.", () => {
+        expect(validateAvailability({ meetingTypes: [makeMeetingType({ name: "" })] })).toMatch(/name/);
+    });
+
+    it("Rejects a meeting type with a non-positive durationMinutes.", () => {
+        expect(validateAvailability({ meetingTypes: [makeMeetingType({ durationMinutes: 0 })] })).toMatch(/durationMinutes/);
+    });
+
+    it("Rejects a meeting type with no location options.", () => {
+        expect(validateAvailability({ meetingTypes: [makeMeetingType({ locationOptions: [] })] })).toMatch(/locationOptions/);
+    });
+
+    it("Rejects a location option with an unrecognized type.", () => {
+        expect(
+            validateAvailability({ meetingTypes: [makeMeetingType({ locationOptions: [{ uid: "lo-1", type: "carrier-pigeon" as any }] })] }),
+        ).toMatch(/type must be one of/);
+    });
+
+    it("Rejects meeting types that repeat the same uid.", () => {
+        expect(
+            validateAvailability({
+                meetingTypes: [makeMeetingType({ uid: "dup" }), makeMeetingType({ uid: "dup" })],
+            }),
+        ).toMatch(/more than once/);
+    });
+
+    it("Rejects location options within one meeting type that repeat the same uid.", () => {
+        expect(
+            validateAvailability({
+                meetingTypes: [
+                    makeMeetingType({
+                        locationOptions: [
+                            { uid: "dup", type: BookingLocationType.VIDEO },
+                            { uid: "dup", type: BookingLocationType.PHONE },
+                        ],
+                    }),
+                ],
+            }),
+        ).toMatch(/more than once/);
+    });
+
+    it("Accepts a location option with no uid (the route assigns one) and an unset videoUrl.", () => {
+        expect(
+            validateAvailability({ meetingTypes: [makeMeetingType({ locationOptions: [{ type: BookingLocationType.VIDEO } as any] })] }),
+        ).toBeUndefined();
     });
 
     it("Rejects a non-positive slotIntervalMinutes.", () => {
@@ -339,14 +410,14 @@ describe("normalizeSlug() Tests", () => {
 });
 
 describe("BookingUtils round-4 limits", () => {
-    it("validateAvailability() requires whole-minute durations and intervals from 5 minutes to a day.", () => {
+    it("validateAvailability() requires whole-minute meeting type durations and intervals from 5 minutes to a day.", () => {
         for (const durationMinutes of [4, 0.5, 5.5, 1441, Number.NaN, "30" as any]) {
-            expect(validateAvailability({ durationMinutes })).toMatch(/durationMinutes/);
+            expect(validateAvailability({ meetingTypes: [makeMeetingType({ durationMinutes })] })).toMatch(/durationMinutes/);
         }
         for (const slotIntervalMinutes of [4, 0.0001, 1441, "15" as any]) {
             expect(validateAvailability({ slotIntervalMinutes })).toMatch(/slotIntervalMinutes/);
         }
-        expect(validateAvailability({ durationMinutes: 5, slotIntervalMinutes: 1440 })).toBeUndefined();
+        expect(validateAvailability({ meetingTypes: [makeMeetingType({ durationMinutes: 5 })], slotIntervalMinutes: 1440 })).toBeUndefined();
     });
 
     it("validateAvailability() bounds bookingWindowDays, minimumNoticeMinutes, buffers and maxPerDay.", () => {
@@ -387,13 +458,22 @@ describe("BookingUtils round-4 limits", () => {
         expect(validateAvailability({ availability: [{ dayOfWeek: 1, startMinute: 540.5, endMinute: 600 }] })).toMatch(/whole minutes/);
     });
 
+    it("validateAvailability() caps meetingTypes and locationOptions counts.", () => {
+        expect(validateAvailability({ meetingTypes: Array(21).fill(makeMeetingType()) })).toMatch(/1 to 20 meeting types/);
+        expect(
+            validateAvailability({
+                meetingTypes: [makeMeetingType({ locationOptions: Array(11).fill({ uid: "lo-1", type: BookingLocationType.VIDEO }) })],
+            }),
+        ).toMatch(/1 to 10 locations/);
+    });
+
     it("generateCandidateSlots() offers nothing for a stored zero, fractional-below-one or non-numeric step instead of looping.", () => {
         const from = new Date("2026-06-01T00:00:00.000Z");
         const to = new Date("2026-06-02T00:00:00.000Z");
         const now = new Date("2026-05-25T00:00:00.000Z");
-        expect(generateCandidateSlots(makeBookingType({ slotIntervalMinutes: 0.0001 }), from, to, now)).toEqual([]);
-        expect(generateCandidateSlots(makeBookingType({ durationMinutes: 0, slotIntervalMinutes: 15 }), from, to, now)).toEqual([]);
-        expect(generateCandidateSlots(makeBookingType({ slotIntervalMinutes: "abc" as any }), from, to, now)).toEqual([]);
+        expect(generateCandidateSlots(makeBookingType({ slotIntervalMinutes: 0.0001 }), 60, from, to, now)).toEqual([]);
+        expect(generateCandidateSlots(makeBookingType({ slotIntervalMinutes: 15 }), 0, from, to, now)).toEqual([]);
+        expect(generateCandidateSlots(makeBookingType({ slotIntervalMinutes: "abc" as any }), 60, from, to, now)).toEqual([]);
     });
 
     it("generateCandidateSlots() de-duplicates starts from overlapping windows and stops collecting after the day it reaches 5000 slots.", () => {
@@ -405,16 +485,15 @@ describe("BookingUtils round-4 limits", () => {
             ],
         });
         expect(
-            isoStarts(generateCandidateSlots(overlapping, new Date("2026-06-01T00:00:00.000Z"), new Date("2026-06-02T00:00:00.000Z"), now)),
+            isoStarts(generateCandidateSlots(overlapping, 60, new Date("2026-06-01T00:00:00.000Z"), new Date("2026-06-02T00:00:00.000Z"), now)),
         ).toEqual(["2026-06-01T13:00:00.000Z", "2026-06-01T14:00:00.000Z", "2026-06-01T15:00:00.000Z"]);
 
         // 1-minute steps (a legacy row) over whole days: 1440 a day, so the cap is crossed on the 4th day.
         const dense = makeBookingType({
-            durationMinutes: 1,
             bookingWindowDays: 365,
             availability: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({ dayOfWeek, startMinute: 0, endMinute: 1440 })),
         });
-        const slots = generateCandidateSlots(dense, new Date("2026-06-01T04:00:00.000Z"), new Date("2026-07-01T04:00:00.000Z"), now);
+        const slots = generateCandidateSlots(dense, 1, new Date("2026-06-01T04:00:00.000Z"), new Date("2026-07-01T04:00:00.000Z"), now);
         expect(slots).toHaveLength(4 * 1440);
         expect(slots[slots.length - 1].start.toISOString()).toBe("2026-06-05T03:59:00.000Z");
     });

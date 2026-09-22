@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { emptyResponse, jsonResponse, mockFetch } from "../testUtils.js";
 import { ApiRequestError } from "@rapidmx/react-shared/util/api.js";
 import {
+    BookingLocationType,
     BookingStatus,
     BookingType,
     PublicBooking,
@@ -25,7 +26,9 @@ import {
     getBookingType,
     getPublicBookingType,
     listBookingTypes,
+    listHostBookings,
     rescheduleBooking,
+    setBookingLocationVideoUrl,
     updateBookingType,
     uploadBookingProfileImage,
 } from "../../../apps/shared/bookingApi.js";
@@ -40,7 +43,7 @@ const bookingType: BookingType = {
     slug: "intro-call",
     name: "Intro Call",
     hostDisplayName: "Jane",
-    durationMinutes: 30,
+    meetingTypes: [{ uid: "mt1", name: "Intro Call", durationMinutes: 30, locationOptions: [{ uid: "lo1", type: BookingLocationType.VIDEO }] }],
     timezone: "America/New_York",
     availability: [],
     dateOverrides: [],
@@ -57,7 +60,7 @@ const publicBookingType: PublicBookingType = {
     slug: "intro-call",
     name: "Intro Call",
     hostDisplayName: "Jane",
-    durationMinutes: 30,
+    meetingTypes: [{ uid: "mt1", name: "Intro Call", durationMinutes: 30, locationOptions: [{ uid: "lo1", type: BookingLocationType.VIDEO }] }],
     timezone: "America/New_York",
     requiresApproval: false,
     minimumNoticeMinutes: 60,
@@ -70,6 +73,9 @@ const publicBooking: PublicBooking = {
     bookingTypeSlug: "intro-call",
     name: "Intro Call",
     hostDisplayName: "Jane",
+    meetingTypeUid: "mt1",
+    meetingTypeName: "Intro Call",
+    locationType: BookingLocationType.VIDEO,
     bookerName: "Bob",
     bookerEmail: "bob@example.com",
     startDate: "2026-09-09T13:00:00.000Z",
@@ -108,7 +114,7 @@ describe("createBookingType", () => {
             slug: "intro-call",
             name: "Intro Call",
             hostDisplayName: "Jane",
-            durationMinutes: 30,
+            meetingTypes: [{ name: "Intro Call", durationMinutes: 30, locationOptions: [{ type: BookingLocationType.VIDEO }] }],
             timezone: "America/New_York",
         });
         const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
@@ -133,7 +139,7 @@ describe("createBookingType", () => {
             slug: "intro-call",
             name: "Intro Call",
             hostDisplayName: "Jane",
-            durationMinutes: 30,
+            meetingTypes: [{ name: "Intro Call", durationMinutes: 30, locationOptions: [{ type: BookingLocationType.VIDEO }] }],
             timezone: "America/New_York",
             requiresApproval: true,
         });
@@ -213,26 +219,26 @@ describe("getPublicBookingType", () => {
 });
 
 describe("getBookingSlots", () => {
-    it("fetches with no query params when from/to are omitted", async () => {
+    it("fetches with only the meetingTypeUid query param when from/to are omitted", async () => {
         const fetchMock = mockFetch(() => jsonResponse(200, []));
-        await getBookingSlots("jane@example.com", "intro-call");
-        expect(fetchMock).toHaveBeenCalledWith("/api/mail/bookings/types/jane@example.com/intro-call/slots", expect.anything());
+        await getBookingSlots("jane@example.com", "intro-call", "mt1");
+        expect(fetchMock).toHaveBeenCalledWith("/api/mail/bookings/types/jane@example.com/intro-call/slots?meetingTypeUid=mt1", expect.anything());
     });
 
     it("forwards from/to as query params when given", async () => {
         const fetchMock = mockFetch(() => jsonResponse(200, []));
-        await getBookingSlots("jane@example.com", "intro-call", "2026-09-01T00:00:00.000Z", "2026-09-08T00:00:00.000Z");
+        await getBookingSlots("jane@example.com", "intro-call", "mt1", "2026-09-01T00:00:00.000Z", "2026-09-08T00:00:00.000Z");
         expect(fetchMock).toHaveBeenCalledWith(
-            "/api/mail/bookings/types/jane@example.com/intro-call/slots?from=2026-09-01T00%3A00%3A00.000Z&to=2026-09-08T00%3A00%3A00.000Z",
+            "/api/mail/bookings/types/jane@example.com/intro-call/slots?meetingTypeUid=mt1&from=2026-09-01T00%3A00%3A00.000Z&to=2026-09-08T00%3A00%3A00.000Z",
             expect.anything(),
         );
     });
 
     it("forwards only the one of from/to that is given", async () => {
         const fetchMock = mockFetch(() => jsonResponse(200, []));
-        await getBookingSlots("mb1", "intro-call", undefined, "2026-09-08T00:00:00.000Z");
+        await getBookingSlots("mb1", "intro-call", "mt1", undefined, "2026-09-08T00:00:00.000Z");
         expect(fetchMock).toHaveBeenLastCalledWith(
-            "/api/mail/bookings/types/mb1/intro-call/slots?to=2026-09-08T00%3A00%3A00.000Z",
+            "/api/mail/bookings/types/mb1/intro-call/slots?meetingTypeUid=mt1&to=2026-09-08T00%3A00%3A00.000Z",
             expect.anything(),
         );
     });
@@ -243,6 +249,8 @@ describe("bookSlot", () => {
         const fetchMock = mockFetch(() => jsonResponse(200, publicBooking));
         const result = await bookSlot("jane@example.com", "intro-call", {
             start: "2026-09-09T13:00:00.000Z",
+            meetingTypeUid: "mt1",
+            locationOptionUid: "lo1",
             bookerName: "Bob",
             bookerEmail: "bob@example.com",
         });
@@ -250,7 +258,13 @@ describe("bookSlot", () => {
             "/api/mail/bookings/types/jane@example.com/intro-call",
             expect.objectContaining({
                 method: "POST",
-                body: JSON.stringify({ start: "2026-09-09T13:00:00.000Z", bookerName: "Bob", bookerEmail: "bob@example.com" }),
+                body: JSON.stringify({
+                    start: "2026-09-09T13:00:00.000Z",
+                    meetingTypeUid: "mt1",
+                    locationOptionUid: "lo1",
+                    bookerName: "Bob",
+                    bookerEmail: "bob@example.com",
+                }),
             }),
         );
         expect(result).toEqual(publicBooking);
@@ -289,6 +303,34 @@ describe("rescheduleBooking", () => {
             expect.objectContaining({ method: "POST", body: JSON.stringify({ start: "2026-09-10T13:00:00.000Z" }) }),
         );
         expect(result).toEqual(moved);
+    });
+});
+
+describe("listHostBookings", () => {
+    it("fetches the booking type's bookings, host-authenticated", async () => {
+        const fetchMock = mockFetch(() => jsonResponse(200, [publicBooking]));
+        const result = await listHostBookings("bt1");
+        expect(fetchMock).toHaveBeenCalledWith("/api/mail/bookings/host?bookingTypeUid=bt1", expect.anything());
+        expect(result).toEqual([publicBooking]);
+    });
+});
+
+describe("setBookingLocationVideoUrl", () => {
+    it("POSTs the new URL to the booking's location route", async () => {
+        const updated = { ...publicBooking, locationVideoUrl: "https://example.com/room" };
+        const fetchMock = mockFetch(() => jsonResponse(200, updated));
+        const result = await setBookingLocationVideoUrl("b1", "https://example.com/room");
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/mail/bookings/host/b1/location",
+            expect.objectContaining({ method: "POST", body: JSON.stringify({ locationVideoUrl: "https://example.com/room" }) }),
+        );
+        expect(result).toEqual(updated);
+    });
+
+    it("sends an empty body to clear a previously-set URL - JSON.stringify() drops an undefined property", async () => {
+        const fetchMock = mockFetch(() => jsonResponse(200, publicBooking));
+        await setBookingLocationVideoUrl("b1", undefined);
+        expect(fetchMock).toHaveBeenCalledWith("/api/mail/bookings/host/b1/location", expect.objectContaining({ body: "{}" }));
     });
 });
 

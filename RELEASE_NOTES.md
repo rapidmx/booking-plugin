@@ -5,6 +5,48 @@
 ### Features
 
 - **A purge hook, so uninstalling with data leaves nothing behind (`./purge`).** When an administrator uninstalls the plugin with **Also delete all data this plugin stored**, the server (once no copy runs the plugin) runs `onPurge()` before it deletes the booking collections and tables: it deletes every profile image (`avatarBlobKey`/`bannerBlobKey`, kept in the `BlobStore` under `booking-profiles/`) by the keys recorded in the profile rows, and throws an `AbortPurgeError` - which stops the purge with the rows still there for a retry - if any image can't be deleted. The bookings the plugin created in people's calendars are the calendar owners' own events and are not touched. Needs a server with `purgeData` support (the next `@rapidmx/server`).
+- **Multiple meeting types per booking link, each with its own location options.** A booking link (`BookingType`) can
+  now offer several meeting types (e.g. "15 Minute Chat" / "60 Minute Consultation"), each with its own duration and
+  its own choice of locations a booker picks from: Phone (the booker types their number), Video call (the host sets a
+  meeting URL, which may be left blank at setup and filled in per booking afterward), and Other (the booker types
+  free-text instructions). Availability - the weekly windows, date overrides, buffers, notice and booking window -
+  stays shared across all of a link's meeting types, exactly as before.
+
+  **Breaking, no migration:** `BookingType.durationMinutes` is removed, replaced by the required `meetingTypes:
+  BookingMeetingType[]` (at least one entry). See "Backend" below and the "Data" section of the README.
+
+#### Backend
+
+  - **Models:** `BookingMeetingType` and `BookingLocationOption` (with the new `BookingLocationType` enum), exported
+    from the package root alongside the existing types. `BookingType.meetingTypes` replaces `durationMinutes`.
+    `Booking` gains `meetingTypeUid`/`meetingTypeName` and `locationType`/`locationLabel`/`bookerPhone`/
+    `locationVideoUrl`/`bookerLocationInstructions` - all snapshotted at booking time, so editing or removing a
+    meeting type or location option later never changes an existing booking.
+  - **`BaseBookingTypeRoute`** assigns a `uid` to any `meetingTypes`/`locationOptions` entry the caller sends without
+    one, on both create and update - a caller may omit it for a new entry and must send back an existing one's uid to
+    edit it in place.
+  - **`GET /types/:mailboxUid/:slug/slots`** now requires a `meetingTypeUid` query parameter. **`POST
+    /types/:mailboxUid/:slug`** now requires `meetingTypeUid` and `locationOptionUid` in the body, plus `bookerPhone`
+    or `bookerLocationInstructions` when the chosen location needs one. The public booking type's `durationMinutes`
+    is replaced by `meetingTypes` (without each option's `videoUrl`, which is shown only after booking).
+  - **Two new host-authenticated endpoints**, permission-checked against the booking's own mailbox rather than the
+    public/anonymous surface: `GET /host?bookingTypeUid=` lists a booking type's recent bookings, and `POST
+    /host/:uid/location` sets or clears a booking's video call URL after the fact.
+  - **`generateCandidateSlots()`** takes the slot duration as an explicit parameter rather than reading it off the
+    booking type, since a duration is now per meeting type. A reschedule keeps a booking's own original duration
+    (`endDate - startDate`) rather than re-deriving it from `meetingTypes`, so it can never change silently.
+
+#### UI
+
+  - **`MeetingTypesEditor`** (`apps/shared`), replacing the single "Duration (minutes)" field on the new and detail
+    booking link forms: add, edit and remove meeting types, each with its own name, duration and nested list of
+    location options (type, optional label, and a meeting URL field shown only for a video location).
+  - **The public booking page** (`apps/book`) shows a meeting type selector above the time grid when a link offers
+    more than one (reloading slots for the chosen one), and, once a time is picked, a location selector with the
+    matching detail field (a phone number, a note that the link will be shared, or a free-text box). The confirmation
+    panel and the manage page both show the booked location.
+  - **The booking link detail page** gets an "Upcoming bookings" section listing the link's recent bookings, with an
+    inline control to set a video booking's meeting URL - the only UI for that host-only capability.
 
 ## v0.2.0
 

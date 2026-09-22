@@ -5,7 +5,7 @@
 import { ObjectDecorators } from "@rapidrest/core";
 import { BaseMongoEntity, DocDecorators, ModelDecorators, PersistenceDecorators } from "@rapidrest/service-core";
 import { MailboxScopedData } from "@rapidmx/restapi";
-import { BookingAvailabilityWindow, BookingDateOverride, BookingType } from "../types.js";
+import { BookingAvailabilityWindow, BookingDateOverride, BookingMeetingType, BookingType } from "../types.js";
 const { Description } = DocDecorators;
 const { DataStore, Protect } = ModelDecorators;
 const { Column, Entity, Index } = PersistenceDecorators;
@@ -60,8 +60,8 @@ export class BookingTypeMongo extends BaseMongoEntity implements BookingType {
     public hostDisplayName: string = "";
 
     @Column()
-    @Description("How long a single booking lasts, in minutes.")
-    public durationMinutes: number = 30;
+    @Description("The offerings this booking link can be booked as, each with its own duration and locations.")
+    public meetingTypes: BookingMeetingType[] = [];
 
     @Column()
     @Description("The IANA timezone identifier availability/dateOverrides are authored in.")
@@ -119,7 +119,7 @@ export class BookingTypeMongo extends BaseMongoEntity implements BookingType {
             this.name = other.name !== undefined ? other.name : this.name;
             this.description = "description" in other ? other.description : this.description;
             this.hostDisplayName = other.hostDisplayName !== undefined ? other.hostDisplayName : this.hostDisplayName;
-            this.durationMinutes = other.durationMinutes !== undefined ? other.durationMinutes : this.durationMinutes;
+            this.meetingTypes = other.meetingTypes !== undefined ? other.meetingTypes : this.meetingTypes;
             this.timezone = other.timezone !== undefined ? other.timezone : this.timezone;
             this.availability = other.availability !== undefined ? other.availability : this.availability;
             this.dateOverrides = other.dateOverrides !== undefined ? other.dateOverrides : this.dateOverrides;
