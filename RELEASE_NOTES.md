@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.4.0
+
 ### Features
 
 - **A video location option fills in its own meeting link automatically, when `@rapidmx/meet-plugin` is

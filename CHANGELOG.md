@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-23
+
+### Changed
+- Fill in a video location's meeting link automatically at booking time when @rapidmx/videoconf-plugin is installed and active and the host hasn't set one, minting a private meeting with the booker as its sole invitee
+- Detect and call the plugin only at runtime, through an optional dependency and a dynamic import that never fails the booking itself, so this plugin keeps working exactly as before wherever video conferencing isn't installed
+- Test every case on both backends, including the plugin reporting active while the import or the call itself genuinely fails
+- Document the integration in the release notes and NOTES, including the pre-existing coverage gate failure this work found but does not touch
+- Updated rapidmx deps
+- Renaming videoconf-plugin to meet-plugin
+
 ## [0.3.0] - 2026-09-22
 
 ### Added
@@ -48,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed the booking pages drawing the deployment logo a second time under the branding header, and pushing the branding footer off screen
 
-[Unreleased]: https://github.com/RapidMX/booking/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/RapidMX/booking/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/RapidMX/booking/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/RapidMX/booking/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/RapidMX/booking/compare/v0.1.0...v0.2.0
