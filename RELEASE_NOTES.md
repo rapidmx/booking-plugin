@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Deleting a booking type that still has bookings is refused (409), instead of orphaning them.** `BaseBookingTypeRoute`
+  had a `requireNoBookings()` guard on `update()` (moving a booking type to another mailbox), but nothing stopped
+  `delete()` outright removing a booking type with active or pending bookings. Every one of `BaseBookingRoute`'s
+  per-booking endpoints (`manage()`/`cancel()`/`reschedule()`/`hostListBookings()`/`setBookingLocationVideoUrl()`)
+  re-resolves the booking type by `bookingTypeUid`, so an orphaned booking's booker permanently lost the ability to
+  view, cancel or reschedule it, and the host lost the ability to manage its video URL - even though the booking
+  itself was still live on the host's calendar. `delete()` now reuses the same guard; disable a booking type
+  (`enabled: false`) instead of deleting it to stop new bookings without losing this.
+- **`Booking.locationVideoUrl`'s SQL column is now `type: "text"`**, matching every other field in `BookingSQL` that
+  can hold more than ~255 characters (`bookerLocationInstructions`, `bookerNotes`). The column had no explicit type
+  or length despite being validated up to 2000 characters, which would silently truncate or fail on a MySQL/MariaDB
+  deployment (not reachable today - only Postgres and SQLite drivers are wired up - but a real gap against this
+  package's own SQL conventions).
+
 ## v0.4.0
 
 ### Features

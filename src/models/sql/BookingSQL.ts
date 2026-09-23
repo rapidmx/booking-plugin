@@ -74,7 +74,7 @@ export class BookingSQL extends BaseEntity implements Booking {
     @Nullable
     public bookerPhone?: string;
 
-    @Column({ nullable: true })
+    @Column({ type: "text", nullable: true })
     @Description("Set when locationType is VIDEO and a URL is known, from setup time or set afterward by the host.")
     @Nullable
     public locationVideoUrl?: string;

@@ -17,7 +17,7 @@ import {
 import { BaseScopedChildRoute, Folder, FolderType } from "@rapidmx/restapi";
 import { normalizeSlug, validateAvailability } from "../util/BookingUtils.js";
 import { Booking, BookingType } from "../models/types.js";
-const { Param, Request, User: AuthUser } = RouteDecorators;
+const { Param, Query, Request, User: AuthUser } = RouteDecorators;
 
 /**
  * Extends `BaseScopedChildRoute` (scoped by `mailboxUid`, the `ContactList`/`MailFilterRule` shape) for
@@ -30,9 +30,16 @@ const { Param, Request, User: AuthUser } = RouteDecorators;
  * availability configuration is validated (a `400`) so an unbookable or non-expandable configuration can't be
  * persisted and then silently produce zero slots forever.
  *
- * A booking type may be moved to another mailbox (`update()` with a new `mailboxUid`) only while it has no bookings:
- * each booking's calendar event lives in the old mailbox's calendar and its manage link resolves that mailbox, so a
- * move would strand them.
+ * A booking type may be moved to another mailbox (`update()` with a new `mailboxUid`), or deleted (`delete()`), only
+ * while it has no bookings - both go through `requireNoBookings()`. A move would strand a booking's calendar event
+ * in the old mailbox's calendar (its manage link resolves the mailbox from the booking, not from the still-live
+ * booking type); a delete is worse - it would leave the booking's `bookingTypeUid` naming nothing at all, and every
+ * one of `BaseBookingRoute`'s per-booking endpoints (`manage()`/`cancel()`/`reschedule()`/`hostListBookings()`/
+ * `setBookingLocationVideoUrl()`) re-resolves the booking type by that uid and 404s the instant it's gone - an
+ * existing booker would permanently lose the ability to view, cancel or reschedule a booking that is still very
+ * much live on the host's calendar. A host wanting to stop new bookings without losing that ability should disable
+ * the booking type (`enabled: false`) instead - that leaves existing bookings and their manage links intact while
+ * making the public endpoints 404 for anyone trying to book it afresh (see `BaseBookingRoute.requireBookingType()`).
  *
  * Unlike `Domain`, whose `uid` *is* its normalized name, `slug` here is an ordinary mutable indexed field. That
  * is deliberate: `RepoUtils.update()` requires `obj.uid === existing.uid` (an identity match, not a rename), so
@@ -80,8 +87,10 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
         }
     }
 
-    /** Rejects a `409` when the booking type `uid` has any booking, cancelled ones included. */
-    private async requireNoBookings(uid: string): Promise<void> {
+    /** Rejects a `409` when the booking type `uid` has any booking, cancelled ones included. `action` names what
+     * the caller was attempting, worded into the error message - see the class doc comment for why both `update()`
+     * (moving mailboxes) and `delete()` share this same guard. */
+    private async requireNoBookings(uid: string, action: "moved to another mailbox" | "deleted"): Promise<void> {
         if (!this.bookingRepo) {
             this.bookingRepo = await this._objectFactory!.newInstance(RepoUtils, { name: this.bookingClass.name, args: [this.bookingClass] });
         }
@@ -89,7 +98,9 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
             throw new ApiError(
                 ApiErrors.IDENTIFIER_EXISTS,
                 409,
-                "This booking link already has bookings, so it cannot be moved to another mailbox. Create a new link for that mailbox instead.",
+                action === "deleted"
+                    ? "This booking link already has bookings, so it cannot be deleted. Disable it instead so its public link stops accepting new bookings."
+                    : "This booking link already has bookings, so it cannot be moved to another mailbox. Create a new link for that mailbox instead.",
             );
         }
     }
@@ -192,7 +203,7 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
                     await this.requireBookableFolder(mailboxUid, (obj as any).calendarFolderUid ?? existing.calendarFolderUid, user);
                 }
                 if (mailboxSent && mailboxUid !== existing.mailboxUid) {
-                    await this.requireNoBookings(id);
+                    await this.requireNoBookings(id, "moved to another mailbox");
                 }
                 // The slug must be free in the mailbox the booking type ends up in, whichever of the two changed.
                 if (slugSent || mailboxSent) {
@@ -201,5 +212,21 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
             }
         }
         return await super.update(id, obj, req, user);
+    }
+
+    /**
+     * Refuses (`409`) to delete a booking type that still has any booking, cancelled ones included - see the
+     * class doc comment for why this is worse than the same restriction on a mailbox move, and why disabling
+     * (`enabled: false`) is the right way to stop new bookings on a link that already has some.
+     */
+    public async delete(
+        @Param("id") id: string,
+        @Query("version") version: string | undefined,
+        @Query("purge") purge: string | undefined,
+        @Request req: HttpRequest,
+        @AuthUser user?: JWTUser,
+    ): Promise<void> {
+        await this.requireNoBookings(id, "deleted");
+        return await super.delete(id, version, purge, req, user);
     }
 }

@@ -240,4 +240,50 @@ export function bookingTypeMailboxSuite(ctx: BookingTypeMailboxSuiteContext): vo
             expect(result.status).toBe(404);
         });
     });
+
+    describe("deleting a booking type", () => {
+        const del = (created: any, token: string = ctx.ownerToken) =>
+            request(ctx.app())
+                .delete(`${ctx.baseUrl}/${created.uid}?version=${created.version}`)
+                .set("Authorization", "jwt " + token);
+
+        it("refuses it when the booking type has any booking (409), and leaves it in place", async () => {
+            const mailbox = await ctx.createMailbox(ctx.ownerUid);
+            const created = (await post(ctx.body(mailbox.uid, { slug: "intro" }))).body;
+            await ctx.createBooking(created.uid, mailbox.uid);
+
+            const result = await del(created);
+
+            expect(result.status).toBe(409);
+            const list = await request(ctx.app())
+                .get(`${ctx.baseUrl}?mailboxUid=${mailbox.uid}`)
+                .set("Authorization", "jwt " + ctx.ownerToken);
+            expect(list.body.map((row: any) => row.uid)).toEqual([created.uid]);
+        });
+
+        it("only counts the booking type's own bookings, and still deletes one with none (204)", async () => {
+            const mailbox = await ctx.createMailbox(ctx.ownerUid);
+            const created = (await post(ctx.body(mailbox.uid, { slug: "intro" }))).body;
+            const sibling = (await post(ctx.body(mailbox.uid, { slug: "sibling" }))).body;
+            await ctx.createBooking(sibling.uid, mailbox.uid);
+
+            // Another booking type's bookings don't matter.
+            const result = await del(created);
+
+            expect(result.status).toBe(204);
+            const list = await request(ctx.app())
+                .get(`${ctx.baseUrl}?mailboxUid=${mailbox.uid}`)
+                .set("Authorization", "jwt " + ctx.ownerToken);
+            expect(list.body.map((row: any) => row.uid)).toEqual([sibling.uid]);
+        });
+
+        it("refuses a caller without DELETE on the mailbox (403), whether or not it has bookings", async () => {
+            const mailbox = await ctx.createMailbox(ctx.ownerUid);
+            const created = (await post(ctx.body(mailbox.uid, { slug: "intro" }))).body;
+
+            const result = await del(created, ctx.otherUserToken);
+
+            expect(result.status).toBe(403);
+        });
+    });
 }

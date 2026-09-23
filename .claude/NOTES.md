@@ -68,9 +68,14 @@ Keep entries terse — this is a reference, not a transcript.
   `/book/<slug>` page is gone rather than redirected: with slugs per mailbox it can't name one booking type, and
   `ReactRoute` warns on a `[slug].tsx` file beside a `[mailboxUid]` directory. `manage/` stays a literal directory, which
   the router prefers over `[mailboxUid]`.
-- **A booking type moves between mailboxes only while it has no bookings** (`requireNoBookings`): each `Booking` keeps a
-  denormalized `mailboxUid` and its event lives in the old mailbox's calendar, and the manage page resolves the mailbox
-  from the booking.
+- **A booking type may be moved to another mailbox, or deleted, only while it has no bookings** - both go through
+  `requireNoBookings()` (`update()`'s own guard, and `delete()`'s since 2026-09-22). A move would strand a booking's
+  calendar event in the old mailbox's calendar (the manage page resolves the mailbox from the booking, not the booking
+  type). A delete is worse: it leaves the booking's `bookingTypeUid` naming nothing, and every one of
+  `BaseBookingRoute`'s per-booking endpoints (`manage()`/`cancel()`/`reschedule()`/`hostListBookings()`/
+  `setBookingLocationVideoUrl()`) re-resolves the booking type by that uid and 404s the instant it's gone - so a booker
+  permanently loses the ability to view, cancel or reschedule a booking that is still live on the host's calendar.
+  Disable a booking type (`enabled: false`) instead of deleting it to stop new bookings without losing this.
 - **The booking page's avatar and banner are `BookingProfile` rows (`uid` = `mailboxUid`) plus `BlobStore` blobs**, the same
   way `Branding`'s logo is stored: raw-body upload, fixed image type list (no SVG), public GET with nosniff and a CSP
   sandbox. The public projections carry only a `version` (the blob key's random part), never a URL or key; the client builds
@@ -228,3 +233,38 @@ Files: `package.json`; changed `src/routes/BaseBookingRoute.ts`, `src/routes/mon
 `test/server-{mongo,sql}/models/index.ts`; new `test/routes/bookingVideoconfIntegrationSuite.ts`,
 `test/routes/{mongo,sql}/BookingRouteVideoconf{ImportFailure,CallFailure}.test.ts`,
 `test/server-{mongo,sql}-import-failure/`. Full suite: 36 files, 734 tests, all passing.
+
+### 2026-09-22 — Adversarial review fixes: deleting a booking type with bookings, and a truncation-prone SQL column
+
+A hardening review (externally-exploitable-only threat model, see standing decision above) found two issues, both fixed:
+
+- **`BaseBookingTypeRoute.delete()` had no `requireNoBookings()` guard**, unlike `update()`'s mailbox-move path -
+  see the standing decision above (updated in place) for why an orphaned booking's booker and host both silently
+  lose the ability to manage it via `BaseBookingRoute`'s per-booking endpoints. Fixed by giving `requireNoBookings()`
+  a second `action` parameter (`"moved to another mailbox"` | `"deleted"`, worded into the `409` message) and adding
+  a `delete()` override that calls it before `super.delete()`. Matches `update()`'s existing pattern: `@Param`/
+  `@Query`/`@Request`/`@AuthUser` re-declared on the override (framework resolves the HTTP verb/path from the
+  inherited method name, not a re-applied `@Delete` decorator) - note `delete()`'s `req` stays *non-optional*
+  there (`BaseScopedChildRoute.delete()`'s own signature, unlike its `update()` which takes `req?`), caught by
+  `tsc`, not by any test.
+- **`BookingSQL.locationVideoUrl` gained `type: "text"`** - was a bare `@Column({ nullable: true })` despite being
+  validated up to 2000 characters (`MAX_VIDEO_URL_LENGTH` in both `BookingUtils.ts` and `BaseBookingRoute.ts`),
+  unlike every other >255-char field in the same file. Not reachable today (only `pg`/`better-sqlite3` are wired up
+  as SQL drivers anywhere in this ecosystem, and both treat this as unbounded) but a real gap against this
+  package's own convention (confirmed against `restapi`'s `SqlDriverColumnTypes.ts` and its own NOTES.md: "long SQL
+  strings are `type: \"text\"`") that would silently truncate on a MySQL/MariaDB deployment. No behavioral test
+  needed - `test/models/sql.test.ts` already round-trips this field on `better-sqlite3`, which doesn't distinguish
+  the two column types either way.
+- **New tests**: `test/routes/bookingTypeMailboxSuite.ts` gained a `describe("deleting a booking type")` block
+  (refuses with a booking, 409, leaves it in place; only counts its own bookings, 204 when it has none; 403 for a
+  caller without DELETE on the mailbox) - reuses the existing `ctx.createBooking` fixture already used by the
+  move-mailbox tests. Full suite: 36 files, 740 tests, all passing; `yarn lint` and both `tsc` builds clean.
+- **Full-suite flakiness observed, unrelated to this change**: three consecutive `vitest run --coverage` passes
+  each failed a different, unrelated test (two `maxPerDay`/cancel assertions returning `500`, then seven unrelated
+  `BookingTypeRoute` mongo tests returning wrong statuses, then one `MongoNetworkError: ECONNRESET` in a videoconf
+  test) - always a different set, never the tests this session touched, and every implicated file passes cleanly
+  in isolation. A fourth run was fully green (740/740). Looks like local Mongo test-instance contention on this
+  machine, not a real regression - not investigated further since it isn't this session's change, but worth knowing
+  if a future run flakes here too. Coverage gate is still the same pre-existing red the "video location option"
+  entry above already documented (97.96%/94.7%/98.06%/97.96%, essentially unchanged) - left alone as out of scope,
+  same as that entry.
