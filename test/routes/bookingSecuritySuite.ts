@@ -169,6 +169,12 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
                 { bookerNotes: "x".repeat(2001) },
                 { bookerNotes: { text: "hi" } },
                 { bookerTimezone: "T".repeat(65) },
+                // `bookerPhone`/`bookerLocationInstructions` are validated unconditionally in `validateBook()`,
+                // whatever location type the caller actually picked - see `BaseBookingRoute.ts`.
+                { bookerPhone: "1".repeat(41) },
+                { bookerPhone: 42 },
+                { bookerLocationInstructions: "x".repeat(2001) },
+                { bookerLocationInstructions: 42 },
             ]) {
                 const result = await book(bookingType.slug, { ...validBooking(), ...overrides });
                 expect(result.status).toBe(400);
@@ -180,6 +186,8 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
                 bookerName: "n".repeat(200),
                 bookerNotes: "x".repeat(2000),
                 bookerTimezone: "T".repeat(64),
+                bookerPhone: "1".repeat(40),
+                bookerLocationInstructions: "x".repeat(2000),
             });
             expect(atLimits.status).toBe(200);
         });

@@ -390,6 +390,25 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             expect(raw).toMatch(/^From: "?Ada Lovelace"? </m);
         });
 
+        it("Omits the cancel/reschedule link from the booking mail when no public booking URL is configured.", async () => {
+            const route: any = objectFactory.getInstance("routes.BookingRoute");
+            const original: string = route.publicUrl;
+            route.publicUrl = "";
+            try {
+                const bookingType = await createBookingType();
+
+                const result = await book(bookingType.slug, validBooking());
+
+                expect(result.status).toBe(200);
+                expect(mailTransport.sent).toHaveLength(1);
+                const raw: string = mailTransport.sent[0].raw.toString();
+                expect(raw).not.toContain("/manage/");
+                expect(raw).not.toContain("To cancel or reschedule");
+            } finally {
+                route.publicUrl = original;
+            }
+        });
+
         it("Leaves an address-like host display name out of the booking mail's From, organizer name and text.", async () => {
             const bookingType = await createBookingType({ hostDisplayName: "ceo＠bank.example" });
 
@@ -894,6 +913,20 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
 
                 expect(result.status).toBe(403);
             });
+
+            it("Rejects a request with no bookingTypeUid at all (400).", async () => {
+                const result = await request(server.getApplication()).get(`${baseUrl}/host`).set("Authorization", "jwt " + ownerToken);
+
+                expect(result.status).toBe(400);
+            });
+
+            it("Returns 404 for a bookingTypeUid that names no booking type.", async () => {
+                const result = await request(server.getApplication())
+                    .get(`${baseUrl}/host?bookingTypeUid=${uuid.v4()}`)
+                    .set("Authorization", "jwt " + ownerToken);
+
+                expect(result.status).toBe(404);
+            });
         });
 
         describe("POST /host/:uid/location", () => {
@@ -908,6 +941,23 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
 
                 expect(result.status).toBe(200);
                 expect(result.body.locationVideoUrl).toBe("https://meet.example.com/new");
+            });
+
+            it("Clears a previously-set video URL when sent an empty one.", async () => {
+                const bookingType = await createBookingType();
+                const created = await book(bookingType.slug, validBooking());
+                await request(server.getApplication())
+                    .post(`${baseUrl}/host/${created.body.uid}/location`)
+                    .set("Authorization", "jwt " + ownerToken)
+                    .send({ locationVideoUrl: "https://meet.example.com/old" });
+
+                const result = await request(server.getApplication())
+                    .post(`${baseUrl}/host/${created.body.uid}/location`)
+                    .set("Authorization", "jwt " + ownerToken)
+                    .send({ locationVideoUrl: "" });
+
+                expect(result.status).toBe(200);
+                expect(result.body.locationVideoUrl).toBeFalsy();
             });
 
             it("Rejects a caller without access to the booking's mailbox (403).", async () => {
@@ -946,6 +996,40 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
                     .send({ locationVideoUrl: "https://meet.example.com/new" });
 
                 expect(result.status).toBe(400);
+            });
+
+            it("Returns 404 for a uid that names no booking.", async () => {
+                const result = await request(server.getApplication())
+                    .post(`${baseUrl}/host/${uuid.v4()}/location`)
+                    .set("Authorization", "jwt " + ownerToken)
+                    .send({ locationVideoUrl: "https://meet.example.com/new" });
+
+                expect(result.status).toBe(404);
+            });
+
+            it("Rejects a locationVideoUrl over the length limit (400).", async () => {
+                const bookingType = await createBookingType();
+                const created = await book(bookingType.slug, validBooking());
+
+                const result = await request(server.getApplication())
+                    .post(`${baseUrl}/host/${created.body.uid}/location`)
+                    .set("Authorization", "jwt " + ownerToken)
+                    .send({ locationVideoUrl: `https://meet.example.com/${"a".repeat(2000)}` });
+
+                expect(result.status).toBe(400);
+            });
+
+            it("Returns 404 when the booking's own booking type has been deleted.", async () => {
+                const bookingType = await createBookingType();
+                const created = await book(bookingType.slug, validBooking());
+                await bookingTypeRepo.clear();
+
+                const result = await request(server.getApplication())
+                    .post(`${baseUrl}/host/${created.body.uid}/location`)
+                    .set("Authorization", "jwt " + ownerToken)
+                    .send({ locationVideoUrl: "https://meet.example.com/new" });
+
+                expect(result.status).toBe(404);
             });
         });
     });

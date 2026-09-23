@@ -67,6 +67,18 @@ describe("MeetingTypesEditor", () => {
         expect(screen.getAllByLabelText("Meeting type name")).toHaveLength(1);
     });
 
+    it("edits one meeting type's name in place without touching a sibling meeting type", async () => {
+        const user = userEvent.setup();
+        render(<Harness initial={[makeMeetingType({ uid: "mt-1", name: "A" }), makeMeetingType({ uid: "mt-2", name: "B" })]} />);
+
+        const names = screen.getAllByLabelText("Meeting type name");
+        await user.clear(names[1]);
+        await user.type(names[1], "B renamed");
+
+        expect(screen.getByDisplayValue("A")).toBeInTheDocument();
+        expect(screen.getByDisplayValue("B renamed")).toBeInTheDocument();
+    });
+
     it("removes a meeting type when more than one exists", async () => {
         const user = userEvent.setup();
         render(<Harness initial={[makeMeetingType({ uid: "mt-1", name: "A" }), makeMeetingType({ uid: "mt-2", name: "B" })]} />);
@@ -96,6 +108,75 @@ describe("MeetingTypesEditor", () => {
 
         expect(screen.getByText("Each meeting type needs at least one location option.")).toBeInTheDocument();
         expect(screen.getAllByLabelText("Type")).toHaveLength(1);
+    });
+
+    it("removes a location option when more than one exists", async () => {
+        const user = userEvent.setup();
+        render(
+            <Harness
+                initial={[
+                    makeMeetingType({
+                        locationOptions: [
+                            { uid: "lo-1", type: BookingLocationType.VIDEO },
+                            { uid: "lo-2", type: BookingLocationType.PHONE },
+                        ],
+                    }),
+                ]}
+            />,
+        );
+
+        expect(screen.getAllByLabelText("Type")).toHaveLength(2);
+        await user.click(screen.getAllByRole("button", { name: "Remove location option" })[0]);
+
+        expect(screen.getAllByLabelText("Type")).toHaveLength(1);
+        expect(screen.queryByLabelText("Meeting URL (optional)")).not.toBeInTheDocument();
+    });
+
+    it("edits one location option's label without touching a sibling location option", async () => {
+        const user = userEvent.setup();
+        render(
+            <Harness
+                initial={[
+                    makeMeetingType({
+                        locationOptions: [
+                            { uid: "lo-1", type: BookingLocationType.VIDEO, label: "Video" },
+                            { uid: "lo-2", type: BookingLocationType.PHONE, label: "Phone" },
+                        ],
+                    }),
+                ]}
+            />,
+        );
+
+        const labels = screen.getAllByLabelText("Label (optional)");
+        await user.clear(labels[1]);
+        await user.type(labels[1], "Cell phone");
+
+        expect(screen.getByDisplayValue("Video")).toBeInTheDocument();
+        expect(screen.getByDisplayValue("Cell phone")).toBeInTheDocument();
+    });
+
+    it("edits a location option's label, clearing it back to unset when emptied out", async () => {
+        const user = userEvent.setup();
+        render(<Harness initial={[makeMeetingType()]} />);
+
+        const label = screen.getByLabelText("Label (optional)");
+        await user.type(label, "Main office");
+        expect(screen.getByDisplayValue("Main office")).toBeInTheDocument();
+
+        await user.clear(label);
+        expect(screen.getByLabelText("Label (optional)")).toHaveValue("");
+    });
+
+    it("edits a video location option's meeting URL, clearing it back to unset when emptied out", async () => {
+        const user = userEvent.setup();
+        render(<Harness initial={[makeMeetingType()]} />);
+
+        const url = screen.getByLabelText("Meeting URL (optional)");
+        await user.type(url, "https://meet.example.com/ada");
+        expect(screen.getByDisplayValue("https://meet.example.com/ada")).toBeInTheDocument();
+
+        await user.clear(url);
+        expect(screen.getByLabelText("Meeting URL (optional)")).toHaveValue("");
     });
 
     it("shows the video URL field only when the location option's type is video", async () => {

@@ -317,6 +317,36 @@ describe("validateAvailability() Tests", () => {
         ).toMatch(/type must be one of/);
     });
 
+    it("Rejects a meeting type whose supplied uid is not a non-empty string.", () => {
+        expect(validateAvailability({ meetingTypes: [makeMeetingType({ uid: "" })] })).toMatch(/meeting type's uid, when supplied/);
+        expect(validateAvailability({ meetingTypes: [makeMeetingType({ uid: 42 as any })] })).toMatch(/meeting type's uid, when supplied/);
+    });
+
+    it("Rejects a location option whose label is supplied but not a bounded string.", () => {
+        expect(
+            validateAvailability({ meetingTypes: [makeMeetingType({ locationOptions: [{ uid: "lo-1", type: BookingLocationType.VIDEO, label: "" }] })] }),
+        ).toMatch(/location option's label, when supplied/);
+        expect(
+            validateAvailability({
+                meetingTypes: [makeMeetingType({ locationOptions: [{ uid: "lo-1", type: BookingLocationType.VIDEO, label: "x".repeat(201) }] })],
+            }),
+        ).toMatch(/location option's label, when supplied/);
+    });
+
+    it("Rejects a location option whose videoUrl is supplied but not a bounded string.", () => {
+        expect(
+            validateAvailability({
+                meetingTypes: [makeMeetingType({ locationOptions: [{ uid: "lo-1", type: BookingLocationType.VIDEO, videoUrl: "x".repeat(2001) }] })],
+            }),
+        ).toMatch(/location option's videoUrl, when supplied/);
+    });
+
+    it("Rejects a location option whose supplied uid is not a non-empty string.", () => {
+        expect(
+            validateAvailability({ meetingTypes: [makeMeetingType({ locationOptions: [{ uid: "", type: BookingLocationType.VIDEO }] })] }),
+        ).toMatch(/location option's uid, when supplied/);
+    });
+
     it("Rejects meeting types that repeat the same uid.", () => {
         expect(
             validateAvailability({

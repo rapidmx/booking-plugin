@@ -120,6 +120,21 @@ describe("NewBookingTypePage", () => {
         expect(await screen.findByText("Slug, name, and host name are all required.")).toBeInTheDocument();
     });
 
+    it("requires every meeting type to have a name before submitting", async () => {
+        mockShell();
+        const user = userEvent.setup();
+        render(<NewBookingTypePage userUid="u1" />);
+        await screen.findByLabelText("Host name shown to visitors");
+
+        await user.type(screen.getByLabelText("Name"), "Intro Call");
+        await user.type(screen.getByLabelText("Slug (used in the public link)"), "intro-call");
+        // A newly-added meeting type starts out with no name of its own.
+        await user.click(screen.getByRole("button", { name: "Add meeting type" }));
+        await user.click(screen.getByRole("button", { name: "Create" }));
+
+        expect(await screen.findByText("Every meeting type needs a name and at least one location option.")).toBeInTheDocument();
+    });
+
     it("creates the booking type and navigates to its detail page", async () => {
         const location = mockLocation();
         const fetchMock = mockShell((url, init) =>

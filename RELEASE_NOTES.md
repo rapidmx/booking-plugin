@@ -18,6 +18,17 @@
   deployment (not reachable today - only Postgres and SQLite drivers are wired up - but a real gap against this
   package's own SQL conventions).
 
+### Tests
+
+- **Closed the test coverage gate's pre-existing gap** (97.96%/94.7%/98.06%/97.96% statements/branches/functions/lines
+  against this package's own 100/95/100/100 gate, flagged as out of scope by the two most recent sessions above) with
+  targeted tests for real, previously-untested behavior - no production code changed, other than two `/* v8 ignore */`
+  comments on two genuinely unreachable UI guards in `apps/book/[mailboxUid]/[slug].tsx`. Now 100%/98.69%/100%/100%;
+  `vitest run --coverage` passes outright. See `.claude/NOTES.md`'s 2026-09-22 "Independent coverage audit" entry for
+  the full list of what was tested and what was judged defensible to leave alone (mostly `?? []` fallbacks guarding
+  server-already-validated data), including one genuinely dead code path flagged for a maintainer follow-up rather
+  than papered over (`BaseBookingRoute.sendBookingMail()`'s `cancelled: true` half, which no current caller reaches).
+
 ## v0.4.0
 
 ### Features

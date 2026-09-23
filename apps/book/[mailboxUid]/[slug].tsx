@@ -128,6 +128,9 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
 
     /** Only reachable from the "Show later times" button, which renders only while a `nextSlots` cursor exists. */
     async function handleLoadMore(cursor: SlotCursor) {
+        /* v8 ignore next 3 -- unreachable: `nextSlots` (the only thing that renders the "Show later times" button
+           this handler is wired to) is set only by a successful `fetchSlotPage()` call, which never runs without
+           `selectedMeetingTypeUid` already set - see `handleSelectMeetingType()`/the initial-load effect above. */
         if (!selectedMeetingTypeUid) {
             return;
         }
@@ -154,6 +157,10 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
             setBookError("Your name and email are both required.");
             return;
         }
+        /* v8 ignore next 4 -- unreachable: `selectedLocationOption` is looked up from `selectedMeetingType`, whose
+           `locationOptions` the server already guarantees has at least one entry, and the effect above resets
+           `selectedLocationOptionUid` to that first entry's uid every time `selectedMeetingType` changes, before
+           this handler (a later, user-triggered event) could ever run against a stale/mismatched pair. */
         if (!selectedLocationOption) {
             setBookError("Please choose how you'd like to meet.");
             return;

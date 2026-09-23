@@ -610,6 +610,38 @@ describe("PublicBookingPage", () => {
             await vi.waitFor(() => expect(requested[requested.length - 1]).toContain("meetingTypeUid=mt2"));
         });
 
+        it("shows an error when reloading slots for a newly chosen meeting type fails", async () => {
+            mockPage((url) => {
+                if (url === "/api/mail/bookings/types/jane@example.com/intro-call") return jsonResponse(200, twoMeetingTypes);
+                if (url.startsWith("/api/mail/bookings/types/jane@example.com/intro-call/slots?meetingTypeUid=mt1")) return jsonResponse(200, [slot1]);
+                if (url.startsWith("/api/mail/bookings/types/jane@example.com/intro-call/slots?meetingTypeUid=mt2")) return jsonResponse(500, { message: "boom" });
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<PublicBookingPage params={{ mailboxUid: "jane@example.com", slug: "intro-call" }} />);
+            await screen.findByText("30 Minute Intro Call");
+
+            await user.click(screen.getByRole("radio", { name: /60 Min Deep Dive/ }));
+
+            expect(await screen.findByText("boom")).toBeInTheDocument();
+        });
+
+        it("shows a generic error when reloading slots for a newly chosen meeting type fails with a non-API error", async () => {
+            mockPage((url) => {
+                if (url === "/api/mail/bookings/types/jane@example.com/intro-call") return jsonResponse(200, twoMeetingTypes);
+                if (url.startsWith("/api/mail/bookings/types/jane@example.com/intro-call/slots?meetingTypeUid=mt1")) return jsonResponse(200, [slot1]);
+                if (url.startsWith("/api/mail/bookings/types/jane@example.com/intro-call/slots?meetingTypeUid=mt2")) throw new TypeError("network down");
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<PublicBookingPage params={{ mailboxUid: "jane@example.com", slug: "intro-call" }} />);
+            await screen.findByText("30 Minute Intro Call");
+
+            await user.click(screen.getByRole("radio", { name: /60 Min Deep Dive/ }));
+
+            expect(await screen.findByText("Could not load this meeting type's open times.")).toBeInTheDocument();
+        });
+
         it("requires a phone number before submitting a phone-location booking", async () => {
             mockPage((url) => {
                 if (url === "/api/mail/bookings/types/jane@example.com/intro-call") return jsonResponse(200, twoMeetingTypes);
@@ -628,6 +660,48 @@ describe("PublicBookingPage", () => {
             await user.click(screen.getByRole("button", { name: "Confirm booking" }));
 
             expect(await screen.findByText("Please enter a phone number.")).toBeInTheDocument();
+        });
+
+        it("books a phone-location meeting once a phone number is entered, sending it trimmed on the request", async () => {
+            const fetchMock = mockPage((url, init) => {
+                if (url === "/api/mail/bookings/types/jane@example.com/intro-call" && (init?.method ?? "GET") === "GET") return jsonResponse(200, twoMeetingTypes);
+                if (url.startsWith("/api/mail/bookings/types/jane@example.com/intro-call/slots?")) return jsonResponse(200, [slot1]);
+                if (url === "/api/mail/bookings/types/jane@example.com/intro-call" && init?.method === "POST") {
+                    return jsonResponse(200, {
+                        uid: "b2",
+                        bookingTypeSlug: "intro-call",
+                        name: "60 Min Deep Dive",
+                        hostDisplayName: "Jane Host",
+                        meetingTypeUid: "mt2",
+                        meetingTypeName: "60 Min Deep Dive",
+                        locationType: "phone",
+                        bookerName: "Bob",
+                        bookerEmail: "bob@example.com",
+                        startDate: slot1.start,
+                        endDate: slot1.end,
+                        status: "confirmed",
+                        manageToken: "tok456",
+                    });
+                }
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<PublicBookingPage params={{ mailboxUid: "jane@example.com", slug: "intro-call" }} />);
+            await screen.findByText("30 Minute Intro Call");
+
+            await user.click(screen.getByRole("radio", { name: /60 Min Deep Dive/ }));
+            await user.click(await screen.findByRole("button", { name: new Date(slot1.start).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) }));
+            await user.type(screen.getByLabelText("Your name"), "Bob");
+            await user.type(screen.getByLabelText("Your email"), "bob@example.com");
+            await user.click(screen.getByRole("radio", { name: "Phone" }));
+            await user.type(screen.getByLabelText("Your phone number"), "  555-123-4567  ");
+            await user.click(screen.getByRole("button", { name: "Confirm booking" }));
+
+            expect(await screen.findByText("You’re booked!")).toBeInTheDocument();
+            const post = fetchMock.mock.calls.find(([, init]: any) => init?.method === "POST");
+            expect(JSON.parse((post?.[1] as RequestInit).body as string)).toEqual(
+                expect.objectContaining({ locationOptionUid: "lo2", bookerPhone: "555-123-4567" }),
+            );
         });
 
         it("shows the 'Other' location's custom label and requires instructions before submitting", async () => {
@@ -649,6 +723,48 @@ describe("PublicBookingPage", () => {
             await user.click(screen.getByRole("button", { name: "Confirm booking" }));
 
             expect(await screen.findByText("Please describe how to reach you.")).toBeInTheDocument();
+        });
+
+        it("books an 'other'-location meeting once instructions are entered, sending them trimmed on the request", async () => {
+            const fetchMock = mockPage((url, init) => {
+                if (url === "/api/mail/bookings/types/jane@example.com/intro-call" && (init?.method ?? "GET") === "GET") return jsonResponse(200, twoMeetingTypes);
+                if (url.startsWith("/api/mail/bookings/types/jane@example.com/intro-call/slots?")) return jsonResponse(200, [slot1]);
+                if (url === "/api/mail/bookings/types/jane@example.com/intro-call" && init?.method === "POST") {
+                    return jsonResponse(200, {
+                        uid: "b3",
+                        bookingTypeSlug: "intro-call",
+                        name: "60 Min Deep Dive",
+                        hostDisplayName: "Jane Host",
+                        meetingTypeUid: "mt2",
+                        meetingTypeName: "60 Min Deep Dive",
+                        locationType: "other",
+                        bookerName: "Bob",
+                        bookerEmail: "bob@example.com",
+                        startDate: slot1.start,
+                        endDate: slot1.end,
+                        status: "confirmed",
+                        manageToken: "tok789",
+                    });
+                }
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<PublicBookingPage params={{ mailboxUid: "jane@example.com", slug: "intro-call" }} />);
+            await screen.findByText("30 Minute Intro Call");
+
+            await user.click(screen.getByRole("radio", { name: /60 Min Deep Dive/ }));
+            await user.click(await screen.findByRole("button", { name: new Date(slot1.start).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) }));
+            await user.type(screen.getByLabelText("Your name"), "Bob");
+            await user.type(screen.getByLabelText("Your email"), "bob@example.com");
+            await user.click(screen.getByRole("radio", { name: "In person" }));
+            await user.type(screen.getByLabelText("How to reach you"), "  Meet at the lobby.  ");
+            await user.click(screen.getByRole("button", { name: "Confirm booking" }));
+
+            expect(await screen.findByText("You’re booked!")).toBeInTheDocument();
+            const post = fetchMock.mock.calls.find(([, init]: any) => init?.method === "POST");
+            expect(JSON.parse((post?.[1] as RequestInit).body as string)).toEqual(
+                expect.objectContaining({ locationOptionUid: "lo3", bookerLocationInstructions: "Meet at the lobby." }),
+            );
         });
     });
 });

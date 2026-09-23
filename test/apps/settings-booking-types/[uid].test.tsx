@@ -534,6 +534,49 @@ describe("BookingTypeDetailPage", () => {
             expect(await screen.findByText("No bookings yet.")).toBeInTheDocument();
         });
 
+        it("shows a loading indicator while the bookings list is still in flight", async () => {
+            let resolveBookings: (r: Response) => void;
+            const bookingsPromise = new Promise<Response>((resolve) => {
+                resolveBookings = resolve;
+            });
+            mockFetch((url) => {
+                if (url.startsWith("/api/mail/mailboxes/auto-provision")) return jsonResponse(404, { message: "not enabled" });
+                if (url.startsWith("/api/mail/mailboxes")) return jsonResponse(200, [mailbox]);
+                if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
+                if (url.startsWith("/api/mail/bookings/host")) return bookingsPromise;
+                throw new Error(`unexpected GET ${url}`);
+            });
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+            await screen.findByLabelText("Name");
+
+            expect(screen.getByText("Loading…")).toBeInTheDocument();
+
+            await act(async () => {
+                resolveBookings(jsonResponse(200, []));
+            });
+            expect(await screen.findByText("No bookings yet.")).toBeInTheDocument();
+        });
+
+        it("shows an error when the bookings list fails to load", async () => {
+            mockShell((url) => {
+                if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
+                if (url.startsWith("/api/mail/bookings/host")) throw new TypeError("network down");
+                return undefined;
+            });
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+            expect(await screen.findByText("Could not load this link's bookings.")).toBeInTheDocument();
+        });
+
+        it("shows the API's own error message when the bookings list fails to load", async () => {
+            mockShell((url) => {
+                if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
+                if (url.startsWith("/api/mail/bookings/host")) return jsonResponse(400, { message: "boom" });
+                return undefined;
+            });
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+            expect(await screen.findByText("boom")).toBeInTheDocument();
+        });
+
         it("lists a booking with its time, meeting type, and booker", async () => {
             mockShell((url) => {
                 if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
@@ -584,6 +627,85 @@ describe("BookingTypeDetailPage", () => {
                     expect.objectContaining({ method: "POST", body: JSON.stringify({ locationVideoUrl: "https://example.com/room" }) }),
                 ),
             );
+        });
+
+        it("clears a video booking's meeting URL when the field is emptied out before saving", async () => {
+            const fetchMock = mockShell((url, init) => {
+                if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
+                if (url === "/api/mail/bookings/host?bookingTypeUid=bt1") return jsonResponse(200, [booking({ locationVideoUrl: "https://old.example.com/room" })]);
+                if (url === "/api/mail/bookings/host/b1/location" && init?.method === "POST") {
+                    return jsonResponse(200, booking({ locationVideoUrl: undefined }));
+                }
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+            const urlField = await screen.findByLabelText("Video URL");
+
+            await user.clear(urlField);
+            await user.click(screen.getByRole("button", { name: "Save video URL" }));
+
+            await vi.waitFor(() =>
+                expect(fetchMock).toHaveBeenCalledWith("/api/mail/bookings/host/b1/location", expect.objectContaining({ method: "POST", body: JSON.stringify({}) })),
+            );
+        });
+
+        it("only updates the booking whose video URL was just saved, leaving other bookings in the list untouched", async () => {
+            mockShell((url, init) => {
+                if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
+                if (url === "/api/mail/bookings/host?bookingTypeUid=bt1") {
+                    return jsonResponse(200, [booking({ uid: "b1" }), booking({ uid: "b2", bookerName: "Ada Lovelace", bookerEmail: "ada@example.com" })]);
+                }
+                if (url === "/api/mail/bookings/host/b1/location" && init?.method === "POST") {
+                    return jsonResponse(200, booking({ uid: "b1", locationVideoUrl: "https://example.com/room" }));
+                }
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+            const urlFields = await screen.findAllByLabelText("Video URL (not set)");
+
+            await user.type(urlFields[0], "https://example.com/room");
+            await user.click(screen.getAllByRole("button", { name: "Save video URL" })[0]);
+
+            await screen.findByDisplayValue("https://example.com/room");
+            // The second booking's own row is untouched - still showing no URL of its own.
+            expect(screen.getByText(/Ada Lovelace \(ada@example.com\)/)).toBeInTheDocument();
+            expect(screen.getAllByLabelText("Video URL (not set)")).toHaveLength(1);
+        });
+
+        it("shows an error when saving a video booking's meeting URL fails", async () => {
+            mockShell((url, init) => {
+                if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
+                if (url === "/api/mail/bookings/host?bookingTypeUid=bt1") return jsonResponse(200, [booking()]);
+                if (url === "/api/mail/bookings/host/b1/location" && init?.method === "POST") throw new TypeError("network down");
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+            const urlField = await screen.findByLabelText("Video URL (not set)");
+
+            await user.type(urlField, "https://example.com/room");
+            await user.click(screen.getByRole("button", { name: "Save video URL" }));
+
+            expect(await screen.findByText("Could not save this booking's video URL.")).toBeInTheDocument();
+        });
+
+        it("shows the API's own error message when saving a video booking's meeting URL fails", async () => {
+            mockShell((url, init) => {
+                if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
+                if (url === "/api/mail/bookings/host?bookingTypeUid=bt1") return jsonResponse(200, [booking()]);
+                if (url === "/api/mail/bookings/host/b1/location" && init?.method === "POST") return jsonResponse(400, { message: "boom" });
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+            const urlField = await screen.findByLabelText("Video URL (not set)");
+
+            await user.type(urlField, "https://example.com/room");
+            await user.click(screen.getByRole("button", { name: "Save video URL" }));
+
+            expect(await screen.findByText("boom")).toBeInTheDocument();
         });
     });
 

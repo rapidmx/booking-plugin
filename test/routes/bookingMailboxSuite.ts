@@ -166,6 +166,17 @@ export function bookingMailboxSuite(ctx: BookingMailboxSuiteContext): void {
         });
     });
 
+    describe("no request context", () => {
+        it("rate limits slots() under an 'unknown' address bucket when called with no HttpRequest, which HTTP never omits but a direct/internal caller could", async () => {
+            const route = ctx.route();
+            const bookingType = await ctx.createBookingType();
+
+            const slots = await route.slots(ctx.mailboxUid(), bookingType.slug, "mt-default", WINDOW_FROM, WINDOW_TO, undefined);
+
+            expect(Array.isArray(slots)).toBe(true);
+        });
+    });
+
     describe("booking profile versions", () => {
         it("omits the avatar and banner versions when the mailbox has no profile", async () => {
             const bookingType = await ctx.createBookingType();

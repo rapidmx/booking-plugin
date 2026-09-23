@@ -226,7 +226,8 @@ anywhere in the family, so this is the new one).
 98.03%/97.93% against 100/95/100/100 - confirmed via `git stash` against the working tree before this integration
 touched anything), entirely in files this change never touches (`BookingUtils.ts`, several pages/components,
 three untested branches already in `BaseBookingRoute.ts` itself, none related to video) - left alone as out of
-scope; every line this integration added is itself 100% covered.
+scope; every line this integration added is itself 100% covered. **Closed 2026-09-22, see that date's own entry
+below** - this was the same gap the "Adversarial review fixes" entry re-confirmed still open a few hours later.
 
 Files: `package.json`; changed `src/routes/BaseBookingRoute.ts`, `src/routes/mongo/BookingRouteMongo.ts`,
 `src/routes/sql/BookingRouteSQL.ts`, `test/config-defaults.ts`, `test/routes/{mongo,sql}/BookingRoute.test.ts`,
@@ -267,4 +268,76 @@ A hardening review (externally-exploitable-only threat model, see standing decis
   machine, not a real regression - not investigated further since it isn't this session's change, but worth knowing
   if a future run flakes here too. Coverage gate is still the same pre-existing red the "video location option"
   entry above already documented (97.96%/94.7%/98.06%/97.96%, essentially unchanged) - left alone as out of scope,
-  same as that entry.
+  same as that entry. **Closed 2026-09-22, see that date's own "independent coverage audit" entry below.**
+
+### 2026-09-22 — Independent coverage audit: closed the pre-existing gate gap
+
+Verified the gap the two entries above flagged as "out of scope" (97.96%/94.7%/98.06%/97.96% against this repo's
+own 100/95/100/100 gate) still held with a fresh, from-scratch `vitest run --coverage`, then closed it with
+targeted tests rather than leaving it flagged again. `reportOnFailure` isn't set in `vitest.config.ts`, so
+`@vitest/coverage-v8` prints no coverage table at all on a run with any failing test - the same local Mongo
+test-instance contention the "Adversarial review fixes" entry above already documented (a different random subset
+of `BookingRoute.test.ts` mongo tests failing with `500`s each attempt) hit on the first two attempts here too,
+each with zero coverage output as a result; a clean, fully-green run was needed to get real numbers at all.
+
+**Before:** 97.96%/94.7%/98.06%/97.96% (statements/branches/functions/lines), 740 tests. **After:**
+100%/98.69%/100%/100%, 784 tests, all passing - the gate now passes outright (`vitest run --coverage` exits 0,
+no threshold errors). Went through every uncovered file/line from a real `coverage-final.json` (not the
+terminal table's truncated line-number column) and judged each genuine-gap-vs-defensible-boilerplate before
+writing anything:
+
+- **Genuine gaps, now tested:** `BookingUtils.ts`'s `validateMeetingTypes()` rejecting an invalid (empty/
+  non-string) meeting-type or location-option uid, an over-long location label, or an over-long `videoUrl`;
+  `BaseBookingTypeRoute.normalizeMeetingTypeUids()` actually preserving an edited-in-place meeting type's and
+  location option's existing uid (only ever exercised before with a brand-new one, minting fresh); `BaseBookingRoute`'s
+  `bookerPhone`/`bookerLocationInstructions` length/type validation (`validateBook()` checks both unconditionally,
+  whatever location the caller picks - untested regardless of location type); the `/host` endpoints'
+  400/404 paths (`GET /host` with no or an unknown `bookingTypeUid`; `POST /host/:uid/location` on an unknown
+  booking, an over-long `locationVideoUrl`, a booking whose own booking type was deleted, and clearing a
+  previously-set URL back to unset - the `videoUrl ?? null` arm); `manageUrl()` omitting the cancel/reschedule
+  line when no `mail:booking:public_url` is configured; `checkBookingRateLimit()` falling back to an `"unknown"`
+  address bucket when called with no `HttpRequest` at all (a direct/internal caller HTTP can't produce, same
+  category as the pre-existing "params that are not text" cases in `bookingMailboxSuite.ts` - added right next to
+  them via `ctx.route()`); the public booking page's phone/other location submission actually completing (typing
+  into the phone number / instructions fields, not just the validation-error path already covered); its error
+  message when reloading slots for a newly-chosen meeting type fails; the booking-type detail page's bookings list
+  load failure/its own API error message, the "Loading…" state (needed a manually-deferred fetch response - the
+  detail page's own load and the bookings list's both start on mount and normally settle in the same tick), saving
+  a video URL's own failure path, clearing a video URL from the field, and one booking's save leaving a sibling
+  booking in the list untouched; `MeetingTypesEditor`'s actually-reachable "remove a location option when more
+  than one exists" success path (only the refusal was tested), editing a label/video URL field including back to
+  unset, and editing one meeting type/location option without touching its sibling (the untouched-sibling arm of
+  each `.map()`); `_locationSummary.ts`'s phone and "other" cases (only video was exercised, via the pages) - new
+  `test/apps/book/_locationSummary.test.ts`; the new-booking-type page's "every meeting type needs a name" guard.
+- **Defensible to skip, left alone, don't block the gate (branches sit at 98.69%, comfortably over the 95% floor):**
+  four `?? []` fallbacks in `BaseBookingRoute.ts` (`requireMeetingType()`/`requireLocationOption()`/
+  `toPublicMeetingTypes()`) and one in `BaseBookingTypeRoute.normalizeMeetingTypeUids()`, guarding
+  `meetingTypes`/`locationOptions` being `undefined` - both are server-validated to have at least one entry before
+  they're ever stored, so this only guards already-written data from a version predating that validation, or a
+  direct DB write bypassing the route entirely; a bare optional-chaining artifact on `meetingType?.uid` in
+  `BookingUtils.validateMeetingTypes()` (`meetingType` is always a real array element here, never nullish); an
+  `if (event)` guard in `book()` right after `persistBooking()` re-reads the very row it just wrote in the same
+  request - only false on a same-request race no test can force without mocking the repo mid-request. **Genuinely
+  dead, not just defensive - flagged for the maintainer, not silently left:** `sendBookingMail()`'s entire
+  `cancelled: true` branch (the "has been cancelled" message, its `icalEvent` CANCEL method/content, skipping the
+  location/approval/manage-link lines) is unreachable via any current caller - `cancel()` deliberately never calls
+  `sendBookingMail()` at all (its own comment: `MeetingSchedulingJob.sendCancellations()` mails the iTIP CANCEL
+  instead), and the only two callers left (`book()`, `reschedule()`) both pass `false`. Left untouched rather than
+  forced with a reflection-style direct call to a private method, since that would test code proven to never run
+  today rather than real behavior - worth a follow-up to either wire cancellation through this path too or delete
+  the dead half of the function and drop the `cancelled` parameter.
+- **Two `/* v8 ignore next N -- ... */` comments added** (this repo's existing convention - see
+  `BookingUtils.ts`'s pre-existing one), both in `apps/book/[mailboxUid]/[slug].tsx`: `handleLoadMore()`'s
+  `!selectedMeetingTypeUid` guard (its own doc comment already says it's only reachable from a button that renders
+  only once a meeting type's slots already loaded successfully) and `handleSubmit()`'s `!selectedLocationOption`
+  guard (a `useEffect` keyed on `selectedMeetingType` always resets `selectedLocationOptionUid` to a real option's
+  uid before any later user action can run against a stale pair, since `locationOptions` is server-guaranteed
+  non-empty). These were the only two remaining statement-level gaps once the reachable one in the same file
+  (`handleSelectMeetingType()`'s own catch block) got a real test instead.
+- **Files touched (tests only, plus the two ignore comments above - no other production-code changes):**
+  `test/util/BookingUtils.test.ts`, `test/routes/{mongo,sql}/BookingTypeRoute.test.ts`,
+  `test/routes/bookingSecuritySuite.ts`, `test/routes/{mongo,sql}/BookingRoute.test.ts`,
+  `test/routes/bookingMailboxSuite.ts`, `test/apps/book/[mailboxUid]/[slug].test.tsx`, new
+  `test/apps/book/_locationSummary.test.ts`, `test/apps/settings-booking-types/[uid].test.tsx`,
+  `test/apps/settings-booking-types/new/index.test.tsx`, `test/apps/shared/components/MeetingTypesEditor.test.tsx`,
+  `apps/book/[mailboxUid]/[slug].tsx`.

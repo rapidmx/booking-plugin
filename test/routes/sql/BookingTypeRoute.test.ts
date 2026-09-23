@@ -341,6 +341,40 @@ describe("Route:BookingTypeSQL Tests", () => {
 
             expect(result.status).toBe(403);
         });
+
+        it("An update keeps an edited-in-place meeting type's and location option's existing uid, and mints one for a brand-new sibling.", async () => {
+            const mailbox = await createMailbox(owner.uid);
+            const created = await request(server.getApplication())
+                .post(baseUrl)
+                .set("Authorization", "jwt " + ownerToken)
+                .send(body(mailbox.uid));
+            const existingMeetingType = created.body.meetingTypes[0];
+            const existingLocationOption = existingMeetingType.locationOptions[0];
+
+            const result = await request(server.getApplication())
+                .put(`${baseUrl}/${created.body.uid}`)
+                .set("Authorization", "jwt " + ownerToken)
+                .send({
+                    uid: created.body.uid,
+                    version: created.body.version,
+                    meetingTypes: [
+                        {
+                            ...existingMeetingType,
+                            name: "Intro Call (renamed)",
+                            locationOptions: [{ ...existingLocationOption, label: "Video" }],
+                        },
+                        { name: "Follow-up", durationMinutes: 15, locationOptions: [{ type: "phone" }] },
+                    ],
+                });
+
+            expect(result.status).toBe(200);
+            expect(result.body.meetingTypes).toHaveLength(2);
+            expect(result.body.meetingTypes[0].uid).toBe(existingMeetingType.uid);
+            expect(result.body.meetingTypes[0].locationOptions[0].uid).toBe(existingLocationOption.uid);
+            expect(result.body.meetingTypes[1].uid).toBeTruthy();
+            expect(result.body.meetingTypes[1].uid).not.toBe(existingMeetingType.uid);
+            expect(result.body.meetingTypes[1].locationOptions[0].uid).toBeTruthy();
+        });
     });
     bookingTypeMailboxSuite({
         app: () => server.getApplication(),
