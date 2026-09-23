@@ -937,9 +937,10 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@rapidmx/booking-plugin@workspace:."
   dependencies:
-    "@rapidmx/react-shared": "npm:^0.6.0"
-    "@rapidmx/restapi": "npm:^0.12.0"
-    "@rapidmx/web-client": "npm:^0.6.0"
+    "@rapidmx/meet-plugin": "npm:^0.1.0"
+    "@rapidmx/react-shared": "npm:^0.13.0"
+    "@rapidmx/restapi": "npm:^0.19.0"
+    "@rapidmx/web-client": "npm:^0.13.0"
     "@rapidrest/core": "npm:^5.2.2"
     "@rapidrest/service-core": "npm:^2.1.1"
     "@swc/core": "npm:^1.16.2"
@@ -991,8 +992,26 @@ __metadata:
     "@rapidrest/service-core": 2.x
     react: 19.x
     react-dom: 19.x
+  dependenciesMeta:
+    "@rapidmx/meet-plugin":
+      optional: true
   languageName: unknown
   linkType: soft
+
+"@rapidmx/meet-plugin@npm:^0.1.0":
+  version: 0.1.0
+  resolution: "@rapidmx/meet-plugin@npm:0.1.0"
+  peerDependencies:
+    "@rapidmx/react-shared": ">=0.6.0 <1"
+    "@rapidmx/restapi": ">=0.17.0 <1"
+    "@rapidmx/web-client": ">=0.11.0 <1"
+    "@rapidrest/core": 5.x
+    "@rapidrest/service-core": 2.x
+    react: 19.x
+    react-dom: 19.x
+  checksum: 10c0/e3672731ebb24475bba61e83653367653b84c2ffbe00c78ddaf516c8ccfc134a5ef361687807af2c5936cbeeeed944c015ca1d28fd692b084dd2ef77868aa66e
+  languageName: node
+  linkType: hard
 
 "@rapidmx/react-shared@npm:^0.6.0":
   version: 0.6.0
