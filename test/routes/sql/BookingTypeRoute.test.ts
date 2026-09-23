@@ -422,5 +422,6 @@ describe("Route:BookingTypeSQL Tests", () => {
         createMailbox,
         createCalendarFolder,
         body,
+        route: () => objectFactory.getInstance("routes.BookingTypeRoute"),
     });
 });

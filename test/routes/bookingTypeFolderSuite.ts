@@ -16,6 +16,11 @@ export interface BookingTypeFolderSuiteContext {
     createMailbox: (ownerUid: string) => Promise<{ uid: string }>;
     createCalendarFolder: (mailboxUid: string, type?: FolderType) => Promise<{ uid: string }>;
     body: (mailboxUid: string, overrides?: any) => any;
+    /** The mounted route instance, for exercising `requireBookableFolder()` directly with a caller that would
+     * also bypass the OUTER (base-class) mailbox permission check `create()`/`update()` go through first - a
+     * trusted admin-role caller. Going through full HTTP `POST`/`PUT` requests can't isolate this class's own
+     * fix from that separate, pre-existing base-class behavior, so this method is called directly instead. */
+    route: () => any;
 }
 
 export function bookingTypeFolderSuite(ctx: BookingTypeFolderSuiteContext): void {
@@ -51,6 +56,14 @@ export function bookingTypeFolderSuite(ctx: BookingTypeFolderSuiteContext): void
             const result = await post(ctx.body(mailbox.uid, { calendarFolderUid: victimFolder.uid }));
 
             expect(result.status).toBe(403);
+        });
+
+        it("rejects a calendar folder's mailbox for a trusted admin-role caller with no explicit grant on it either (403) - called directly, since the full HTTP create()/update() path can't isolate this check from the base class's own separate (pre-existing, out of scope here) permission check", async () => {
+            const victimMailbox = await ctx.createMailbox(ctx.otherUserUid);
+            const victimFolder = await ctx.createCalendarFolder(victimMailbox.uid);
+            const adminUser: any = { uid: "admin-no-grant", roles: ["admin"], elevated: Date.now() };
+
+            await expect(ctx.route().requireBookableFolder(victimMailbox.uid, victimFolder.uid, adminUser)).rejects.toMatchObject({ status: 403 });
         });
 
         it("rejects a folder of the right mailbox that isn't a calendar (400)", async () => {

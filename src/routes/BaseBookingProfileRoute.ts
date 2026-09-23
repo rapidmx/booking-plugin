@@ -17,6 +17,7 @@ import {
 } from "@rapidrest/service-core";
 import type { BlobStore, Mailbox } from "@rapidmx/restapi";
 import { BookingProfile } from "../models/types.js";
+import { stripTrustedRoles } from "../util/RouteAccessUtils.js";
 const { Inject, Logger } = ObjectDecorators;
 const { Delete, Get, Param, Post, Query, Request, Response, User: AuthUser } = RouteDecorators;
 
@@ -85,6 +86,13 @@ export abstract class BaseBookingProfileRoute<P extends BookingProfile, M extend
     @Logger
     private logger: any;
 
+    /** Roles `@rapidrest/service-core`'s `ACLUtils.hasPermission()` treats as always-permitted - which must never
+     * apply to another user's mailbox. `requireMailboxPermission()` below strips these via `stripTrustedRoles()`
+     * before ever consulting `hasPermission()`, so an admin-role caller with no actual grant on a mailbox is
+     * denied exactly like a stranger - see `util/RouteAccessUtils.ts` for why this package can't just import
+     * `@rapidmx/restapi`'s own equivalent fix. */
+    private trustedRoles: string[] = ["admin"];
+
     private async init(): Promise<void> {
         if (!this.profileRepo) {
             this.profileRepo = await this._objectFactory!.newInstance(RepoUtils, {
@@ -105,9 +113,11 @@ export abstract class BaseBookingProfileRoute<P extends BookingProfile, M extend
         return typeof mailboxUid === "string" ? mailboxUid.trim().toLowerCase() : "";
     }
 
-    /** Rejects a caller without `action` on the mailbox with a `403`, and an unknown mailbox with a `404`. */
+    /** Rejects a caller without `action` on the mailbox with a `403`, and an unknown mailbox with a `404`. `user` is
+     * stripped of its trusted roles first (see `trustedRoles`'s own doc comment) so an admin-role caller with no
+     * grant on this mailbox is refused exactly like anyone else. */
     private async requireMailboxPermission(mailboxUid: string, user: JWTUser | undefined, action: string): Promise<void> {
-        if (!mailboxUid || !(await this.aclUtils!.hasPermission(user, mailboxUid, action))) {
+        if (!mailboxUid || !(await this.aclUtils!.hasPermission(stripTrustedRoles(user, this.trustedRoles), mailboxUid, action))) {
             throw new ApiError(ApiErrors.AUTH_PERMISSION_FAILURE, 403, ApiErrorMessages.AUTH_PERMISSION_FAILURE);
         }
         // Permission first, so a caller who can't read the mailbox learns nothing about which ones exist. A trusted caller

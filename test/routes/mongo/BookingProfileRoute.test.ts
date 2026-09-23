@@ -109,6 +109,9 @@ describe("Route:BookingProfileMongo Tests", () => {
         adminToken,
         createMailbox: (ownerUid: string) => createMailbox(ownerUid, [{ userOrRoleId: ownerUid, actions: [ACLAction.FULL] }]),
         createSharedMailbox: (userUid: string, actions: string[]) => createMailbox(undefined, [{ userOrRoleId: userUid, actions }]),
+        deleteMailboxRow: async (mailboxUid: string) => {
+            await mailboxRepo.deleteOne({ uid: mailboxUid });
+        },
         findProfile: async (uid: string) => (await profileRepo.findOne({ uid })) ?? undefined,
         saveProfile: async (data: any) => {
             await profileRepo.save(new BookingProfileMongo(data));

@@ -4,6 +4,38 @@
 
 ### Fixes
 
+- **Bulk-deleting (truncating) a mailbox's booking types no longer bypasses the same-mailbox bookings guard.**
+  `BaseBookingTypeRoute` overrode `create()`/`update()`/`delete()`, but `BaseScopedChildRoute` also exposes a fourth,
+  genuinely permanent bulk-delete endpoint - `truncate()` (`DELETE /api/mail/booking-types?mailboxUid=...`, no
+  `/:id`) - gated only by `ACLAction.TRUNCATE` on the mailbox, which a mailbox owner holds by default. Left
+  unoverridden, an ordinary host could hard-delete every booking type in their own mailbox, including ones with
+  active bookings, in one request that never touched the `requireNoBookings()` guard `delete()` already had -
+  orphaning every booking under every purged type exactly like the unguarded `delete()` used to. `truncate()` is now
+  overridden the same way: every booking type the truncate filter matches is checked first, and the WHOLE call is
+  refused (409) if any of them has a booking, leaving every matched booking type in place - not just the offending
+  one - so a bulk "delete everything matching this filter" request never produces a surprising partial result.
+- **Three mailbox-permission checks in this package's own routes no longer treat a trusted `admin` role as
+  always-permitted on a mailbox it holds no grant on.** `BaseBookingProfileRoute.requireMailboxPermission()`,
+  `BaseBookingRoute.requireMailboxPermission()` (the host-only `/host` endpoints) and
+  `BaseBookingTypeRoute.requireBookableFolder()` each called `ACLUtils.hasPermission()` with the caller as given;
+  that method answers `true` for any trusted-role caller regardless of grant, which is the right behavior for
+  administering the platform and the wrong one for someone else's mailbox, avatar/banner, private bookings, or
+  calendar. An admin-role caller with no explicit grant could therefore read or change another mailbox's booking
+  profile, manage its private bookings, or point a booking type's `calendarFolderUid` at a calendar folder in a
+  mailbox they don't own - leaking its free/busy through the public slots endpoint and planting events in it. All
+  three now strip trusted roles first (new `stripTrustedRoles()` in `src/util/RouteAccessUtils.ts`, a small
+  self-contained copy of `@rapidmx/restapi`'s own fix for the identical issue - not importable here since this
+  package is pinned to a `@rapidmx/restapi` version that predates it), so a trusted role is refused exactly like a
+  stranger unless it also holds a real grant.
+- **`maxPerDay` was wrongly enforced (or wrongly bypassed) on a DST transition day.** `countBookingsOnDay()` derived
+  a local calendar day's end by adding a flat 24 hours to its start instead of resolving the following local
+  midnight - correct on an ordinary day, but a spring-forward day is only 23 real hours (the window overshot into
+  the next day's first hour, double-counting a booking made just after midnight and sometimes wrongly refusing a
+  valid booking with "That day is fully booked") and a fall-back day is 25 real hours (the window fell short of
+  real midnight, undercounting a booking made in the last local hour and letting a caller exceed `maxPerDay`). Both
+  were reachable by any anonymous booker, twice a year per host timezone. Fixed by resolving the day's end the same
+  way its start already was - via the timezone-aware local-to-UTC conversion `generateCandidateSlots()` also uses -
+  instead of a fixed millisecond offset.
 - **Deleting a booking type that still has bookings is refused (409), instead of orphaning them.** `BaseBookingTypeRoute`
   had a `requireNoBookings()` guard on `update()` (moving a booking type to another mailbox), but nothing stopped
   `delete()` outright removing a booking type with active or pending bookings. Every one of `BaseBookingRoute`'s

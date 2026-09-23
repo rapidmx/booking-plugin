@@ -68,14 +68,25 @@ Keep entries terse — this is a reference, not a transcript.
   `/book/<slug>` page is gone rather than redirected: with slugs per mailbox it can't name one booking type, and
   `ReactRoute` warns on a `[slug].tsx` file beside a `[mailboxUid]` directory. `manage/` stays a literal directory, which
   the router prefers over `[mailboxUid]`.
-- **A booking type may be moved to another mailbox, or deleted, only while it has no bookings** - both go through
-  `requireNoBookings()` (`update()`'s own guard, and `delete()`'s since 2026-09-22). A move would strand a booking's
-  calendar event in the old mailbox's calendar (the manage page resolves the mailbox from the booking, not the booking
-  type). A delete is worse: it leaves the booking's `bookingTypeUid` naming nothing, and every one of
-  `BaseBookingRoute`'s per-booking endpoints (`manage()`/`cancel()`/`reschedule()`/`hostListBookings()`/
-  `setBookingLocationVideoUrl()`) re-resolves the booking type by that uid and 404s the instant it's gone - so a booker
-  permanently loses the ability to view, cancel or reschedule a booking that is still live on the host's calendar.
+- **A booking type may be moved to another mailbox, or deleted (singly or in bulk), only while it has no bookings** -
+  all three go through `requireNoBookings()` (`update()`'s own guard, `delete()`'s since 2026-09-22, and
+  `truncate()`'s since 2026-09-23 - see that date's own entry for why the bulk endpoint needed its own override
+  rather than inheriting `delete()`'s fix for free). A move would strand a booking's calendar event in the old
+  mailbox's calendar (the manage page resolves the mailbox from the booking, not the booking type). A delete is
+  worse: it leaves the booking's `bookingTypeUid` naming nothing, and every one of `BaseBookingRoute`'s per-booking
+  endpoints (`manage()`/`cancel()`/`reschedule()`/`hostListBookings()`/`setBookingLocationVideoUrl()`) re-resolves
+  the booking type by that uid and 404s the instant it's gone - so a booker permanently loses the ability to view,
+  cancel or reschedule a booking that is still live on the host's calendar. `truncate()` refuses the WHOLE bulk call
+  (409) if ANY matched booking type has a booking, rather than silently skipping just the offending rows - a
+  partial truncate would be a surprising result for a bulk "delete everything matching this filter" request.
   Disable a booking type (`enabled: false`) instead of deleting it to stop new bookings without losing this.
+- **Every mailbox-scoped permission check in this package's own routes must strip trusted roles first**
+  (`stripTrustedRoles()`, `src/util/RouteAccessUtils.ts`) before calling `ACLUtils.hasPermission()` - that method
+  treats a trusted (`admin`) role as always-permitted, which must never apply to someone else's mailbox (see
+  2026-09-23's entry). This package can't import `@rapidmx/restapi`'s own equivalent fix (`MailAccessUtils.ts`) -
+  it isn't in the `@rapidmx/restapi` version this package is actually pinned to (`yarn.lock`: `0.12.0`) - so, like
+  `@rapidmx/meet-plugin`, it keeps a small local copy instead. Any NEW hand-rolled mailbox-permission check added to
+  this package must go through it too.
 - **The booking page's avatar and banner are `BookingProfile` rows (`uid` = `mailboxUid`) plus `BlobStore` blobs**, the same
   way `Branding`'s logo is stored: raw-body upload, fixed image type list (no SVG), public GET with nosniff and a CSP
   sandbox. The public projections carry only a `version` (the blob key's random part), never a URL or key; the client builds
@@ -341,3 +352,77 @@ writing anything:
   `test/apps/book/_locationSummary.test.ts`, `test/apps/settings-booking-types/[uid].test.tsx`,
   `test/apps/settings-booking-types/new/index.test.tsx`, `test/apps/shared/components/MeetingTypesEditor.test.tsx`,
   `apps/book/[mailboxUid]/[slug].tsx`.
+
+### 2026-09-23 — Round-3 adversarial review: truncate() bypassed the bookings guard, a trusted-role ACL bypass, and a DST maxPerDay bug
+
+A further hardening review found three more issues (same externally-exploitable-only threat model as the
+2026-09-22 entry above), all fixed in one pass:
+
+- **`BaseScopedChildRoute.truncate()` (the bulk `DELETE /api/mail/booking-types?mailboxUid=...` endpoint, no `/:id`)
+  was completely unguarded** - `BaseBookingTypeRoute` overrode `create()`/`update()`/`delete()` but not `truncate()`,
+  so the `requireNoBookings()` guard the 2026-09-22 entry above added to `delete()` was trivially bypassable via
+  this second, unaudited route: `ACLAction.TRUNCATE` is included in the `ACLAction.FULL` grant a mailbox owner
+  holds by default, so an ordinary host could hard-delete every booking type in their own mailbox - active bookings
+  included - in one request. Fixed by overriding `truncate()`: it pages through every `BookingType` the truncate
+  filter is about to match (`findAllMatchingTruncate()` - `BaseScopedChildRoute`'s own equivalent helpers
+  (`scopedFilter()`/`findAllForTruncate()`) are `private`, so this duplicates the small, already-precedented
+  `stripUnsafeQueryKeys()` pattern other restapi route files use, rather than reimplementing the rest of the base
+  class's permission/legal-hold machinery), checks each via `requireNoBookings()`, and refuses the WHOLE call
+  (409) if any has a booking - deliberately not a partial truncate of just the bookingless rows, so a bulk "delete
+  everything matching this filter" request never produces a surprising partial result. Tests:
+  `test/routes/bookingTypeMailboxSuite.ts`'s new `describe("truncating...")` block (refuses the whole call and
+  leaves every matched row in place; still succeeds when none have bookings; only counts each row's own mailbox's
+  bookings; refuses without TRUNCATE) plus a direct unit test of `stripUnsafeTruncateQueryKeys()` for the one branch
+  HTTP can't reach (a client-sent `shareToken`/`scope`/dotted-`$` key).
+- **Three of this package's own hand-rolled mailbox-permission checks called `ACLUtils.hasPermission()` with the
+  caller as given** - `BaseBookingProfileRoute.requireMailboxPermission()`, `BaseBookingRoute.
+  requireMailboxPermission()` (the `/host` endpoints) and `BaseBookingTypeRoute.requireBookableFolder()`. That
+  method answers `true` for any trusted-role (`admin`) caller regardless of grant - the right behavior for
+  administering the platform, the wrong one for someone else's mailbox. Same bug class already fixed in
+  `@rapidmx/restapi` itself and in `activesync` this session; **this package can't import `@rapidmx/restapi`'s own
+  `stripTrustedRoles()`/`hasMailAccess()` fix** - confirmed via `node_modules/@rapidmx/restapi`'s actually-resolved
+  version (`yarn.lock` pins `0.12.0`, published well before that fix existed - `dist/lib/util/` there has no
+  `MailAccessUtils.js` at all, unlike `activesync`'s freshly-rebuilt `node_modules` copy from today's other session
+  work) - so this repeats `@rapidmx/meet-plugin`'s own precedent: a small, self-contained local copy, new
+  `src/util/RouteAccessUtils.ts` (`stripTrustedRoles()`), applied at all three call sites via a new `private
+  trustedRoles: string[] = ["admin"]` field on each route (`BaseBookingTypeRoute` already inherits one for free from
+  `ModelRoute`, so only the other two needed it). **Revealed an existing test fixture that had been unknowingly
+  exploiting this exact bug**: `bookingProfileSuite.ts`'s `adminToken` fixture was documented as "passes every
+  mailbox permission check - even for a mailbox that doesn't exist" and a test used that bypass to observe the
+  404-vs-403 branch on a nonexistent mailbox uid. Both were rewritten: the doc comment now says what's actually
+  true post-fix, and the 404-observation test uses a new `deleteMailboxRow()` fixture (deletes just the mailbox row,
+  keeping its `AccessControlList` so a REAL grant, not a bypass, is what lets `ownerToken` see the 404) instead of
+  the no-longer-bypassing `adminToken`. New regression tests at all three call sites prove an admin-role caller with
+  no explicit grant is refused (403) exactly like a stranger, plus a unit test file for `stripTrustedRoles()` itself
+  (`test/util/RouteAccessUtils.test.ts`, mirrors `meet-plugin`'s own).
+- **`countBookingsOnDay()`'s day-boundary math broke on a DST transition day.** `dayEnd` was `dayStart + 24h - 1ms`
+  - correct on an ordinary day, wrong on the two days a year it isn't 24 real hours. Spring-forward (23h): the
+  window overshot into the next day's first ~59 minutes, so an existing booking made just after local midnight on
+  the FOLLOWING day got double-counted against the PREVIOUS day's `maxPerDay`, wrongly refusing ("That day is fully
+  booked.") a legitimate booking on a day that in fact had none yet. Fall-back (25h): the window fell short of the
+  following real local midnight by the same ~59 minutes, so an existing booking made in the last local hour of the
+  day was silently excluded from its own day's count, letting a caller exceed `maxPerDay`. Fixed by resolving
+  `dayEnd` the same way `dayStart` already was - `convertLocalToUtc()` on the NEXT calendar day's Y/M/D (stepped via
+  `Date.UTC()`, pure calendar arithmetic, never an instant - the exact pattern `generateCandidateSlots()` already
+  uses to cross days) - instead of a fixed millisecond offset. Tests: `describe("maxPerDay across a DST transition
+  (America/New_York)"` in both `BookingRoute.test.ts` files, using the real 2026-projected US DST dates for 2099
+  (2099-03-08 spring-forward, 2099-11-01 fall-back, found by probing `Intl.DateTimeFormat`'s `timeZoneName` day by
+  day rather than hand-computing "second Sunday in March"/"first Sunday in November") - one proves both the
+  previous and the transition day's own booking succeed (the wrongly-refused case), the other proves a second
+  booking on the transition day is still refused once `maxPerDay` is reached even when the first booking sits in
+  the last real local hour (the wrongly-allowed case).
+- **Full suite: 812 tests, 38 files, all green on a clean run** (`vitest run --coverage`: 100%/98.62%/100%/100%
+  statements/branches/functions/lines - gate is 100/95/100/100, passes outright); `yarn lint` and `tsc --noEmit`
+  clean. **Same pre-existing local-Mongo-contention flakiness the 2026-09-22 entries above already documented**:
+  `BookingRouteVideoconfImportFailure.test.ts` (mongo) failed once with an unrelated `500` in two of four full-suite
+  attempts this session, always passing cleanly alone and in every other full run - not a regression from this
+  session's changes (confirmed by running it in isolation, and by two other fully-green full-suite runs).
+- **Not acted on, out of scope per the review**: the `ErasureExecutionJob` cross-entity-type non-atomicity finding
+  (structural, restapi-level, not fixable in this repo) and the dead `sendBookingMail()` `cancelled: true` branch
+  (already flagged as a known follow-up by the 2026-09-22 "Independent coverage audit" entry above - still
+  unreached, still left alone).
+- Files touched: `src/routes/BaseBookingTypeRoute.ts`, `src/routes/BaseBookingRoute.ts`,
+  `src/routes/BaseBookingProfileRoute.ts`; new `src/util/RouteAccessUtils.ts`; tests in
+  `test/routes/bookingTypeMailboxSuite.ts`, `test/routes/bookingTypeFolderSuite.ts`, `test/routes/bookingProfileSuite.ts`,
+  `test/routes/{mongo,sql}/BookingTypeRoute.test.ts`, `test/routes/{mongo,sql}/BookingProfileRoute.test.ts`,
+  `test/routes/{mongo,sql}/BookingRoute.test.ts`; new `test/util/RouteAccessUtils.test.ts`.

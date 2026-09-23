@@ -286,4 +286,89 @@ export function bookingTypeMailboxSuite(ctx: BookingTypeMailboxSuiteContext): vo
             expect(result.status).toBe(403);
         });
     });
+
+    describe("truncating (bulk-deleting) a mailbox's booking types", () => {
+        const truncate = (mailboxUid: string, token: string = ctx.ownerToken) =>
+            request(ctx.app())
+                .delete(`${ctx.baseUrl}?mailboxUid=${mailboxUid}`)
+                .set("Authorization", "jwt " + token);
+
+        it("refuses the WHOLE truncate (409) when any matched booking type has a booking, leaving ALL of them in place", async () => {
+            const mailbox = await ctx.createMailbox(ctx.ownerUid);
+            const withBooking = (await post(ctx.body(mailbox.uid, { slug: "intro" }))).body;
+            const withoutBooking = (await post(ctx.body(mailbox.uid, { slug: "sibling" }))).body;
+            await ctx.createBooking(withBooking.uid, mailbox.uid);
+
+            const result = await truncate(mailbox.uid);
+
+            expect(result.status).toBe(409);
+            const list = await request(ctx.app())
+                .get(`${ctx.baseUrl}?mailboxUid=${mailbox.uid}`)
+                .set("Authorization", "jwt " + ctx.ownerToken);
+            // Neither the offending row NOR its bookingless sibling was deleted - a partial truncate would be a
+            // surprising result for a bulk "delete everything matching this filter" request.
+            expect(list.body.map((row: any) => row.uid).sort()).toEqual([withBooking.uid, withoutBooking.uid].sort());
+        });
+
+        it("still truncates every booking type with no bookings at all (204/200)", async () => {
+            const mailbox = await ctx.createMailbox(ctx.ownerUid);
+            await post(ctx.body(mailbox.uid, { slug: "intro" }));
+            await post(ctx.body(mailbox.uid, { slug: "sibling" }));
+
+            const result = await truncate(mailbox.uid);
+
+            expect(result.status).toBeGreaterThanOrEqual(200);
+            expect(result.status).toBeLessThan(300);
+            const list = await request(ctx.app())
+                .get(`${ctx.baseUrl}?mailboxUid=${mailbox.uid}`)
+                .set("Authorization", "jwt " + ctx.ownerToken);
+            expect(list.body).toEqual([]);
+        });
+
+        it("only counts each matched booking type's own bookings, not another mailbox's", async () => {
+            const mailbox = await ctx.createMailbox(ctx.ownerUid);
+            const other = await ctx.createMailbox(ctx.ownerUid);
+            const otherWithBooking = (await post(ctx.body(other.uid, { slug: "intro" }))).body;
+            await ctx.createBooking(otherWithBooking.uid, other.uid);
+            await post(ctx.body(mailbox.uid, { slug: "clean" }));
+
+            // The other mailbox's booked booking type doesn't block truncating THIS mailbox.
+            const result = await truncate(mailbox.uid);
+
+            expect(result.status).toBeGreaterThanOrEqual(200);
+            expect(result.status).toBeLessThan(300);
+            const list = await request(ctx.app())
+                .get(`${ctx.baseUrl}?mailboxUid=${mailbox.uid}`)
+                .set("Authorization", "jwt " + ctx.ownerToken);
+            expect(list.body).toEqual([]);
+            // The other mailbox's booking type - which DOES have a booking - is still refused on its own truncate.
+            expect((await truncate(other.uid)).status).toBe(409);
+        });
+
+        it("refuses a caller without TRUNCATE on the mailbox (403), whether or not it has bookings", async () => {
+            const mailbox = await ctx.createMailbox(ctx.ownerUid);
+            await post(ctx.body(mailbox.uid, { slug: "intro" }));
+
+            const result = await truncate(mailbox.uid, ctx.otherUserToken);
+
+            expect(result.status).toBe(403);
+            const list = await request(ctx.app())
+                .get(`${ctx.baseUrl}?mailboxUid=${mailbox.uid}`)
+                .set("Authorization", "jwt " + ctx.ownerToken);
+            expect(list.body.length).toBe(1);
+        });
+
+        it("strips the shareToken/scope selectors and any $-segment key from the pre-check's own filter, mirroring BaseScopedChildRoute's own stripUnsafeQueryKeys()", () => {
+            const stripped = ctx.route().stripUnsafeTruncateQueryKeys({
+                mailboxUid: "mbx",
+                shareToken: "t",
+                scope: "admin",
+                $or: "widen",
+                "a.$b": "z",
+                enabled: "true",
+            });
+
+            expect(stripped).toEqual({ mailboxUid: "mbx", enabled: "true" });
+        });
+    });
 }

@@ -75,6 +75,12 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
     const ownerToken = JWTUtils.createTokenSync(config.get("auth"), owner);
     const otherUser: any = { uid: uuid.v4(), roles: [], elevated: Date.now() };
     const otherUserToken = JWTUtils.createTokenSync(config.get("auth"), otherUser);
+    // A trusted `admin` role, no explicit grant on the fixture mailbox - proves the `/host` endpoints' own
+    // `requireMailboxPermission()` strips trusted roles before ever consulting `hasPermission()` (see
+    // `BaseBookingRoute.ts`'s `trustedRoles` field), so the framework's "trusted users always have permission"
+    // shortcut never applies to someone else's mailbox here either.
+    const admin: any = { uid: uuid.v4(), roles: ["admin"], elevated: Date.now() };
+    const adminToken = JWTUtils.createTokenSync(config.get("auth"), admin);
 
     const createBookingType = async function (data?: any): Promise<BookingTypeMongo> {
         return await bookingTypeRepo.save(
@@ -895,6 +901,48 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
         expect(mailTransport.sent).toHaveLength(0);
     });
 
+    describe("maxPerDay across a DST transition (America/New_York)", () => {
+        // `countBookingsOnDay()` derives a local calendar day's `[dayStart, dayEnd)` window from `slotStart`'s own
+        // local date. A flat `dayEnd = dayStart + 24h` (the bug) drifts off the real local-midnight boundary on
+        // either kind of DST transition day: it overshoots into the next day's first hour on a 23-real-hour
+        // spring-forward day, and falls short of the following midnight on a 25-real-hour fall-back day. Windows
+        // below cover 00:30-02:30, 09:00-11:00 and 23:00-24:00 local every day of the week, with the default
+        // 60-minute meeting duration, so each probed time is a real candidate slot.
+        const dstAvailability = [0, 1, 2, 3, 4, 5, 6].flatMap((dayOfWeek) => [
+            { dayOfWeek, startMinute: 30, endMinute: 150 },
+            { dayOfWeek, startMinute: 540, endMinute: 660 },
+            { dayOfWeek, startMinute: 1380, endMinute: 1440 },
+        ]);
+
+        it("does not let a booking just after local midnight on a spring-forward day (2099-03-08, US) count against the PREVIOUS day's maxPerDay", async () => {
+            const bookingType = await createBookingType({ maxPerDay: 1, availability: dstAvailability });
+            // 2099-03-09 00:30 local (EDT) - the first real hour of the NEXT day, which a flat +24h `dayEnd` for
+            // 2099-03-08 would wrongly still include.
+            const earlyNextDay = await book(bookingType.slug, validBooking("2099-03-09T04:30:00.000Z"));
+            expect(earlyNextDay.status).toBe(200);
+
+            // A booking squarely on 2099-03-08 itself, which has no bookings of its own yet - correct behavior
+            // allows it; the bug above would count `earlyNextDay` against this day too and wrongly refuse it.
+            const onTransitionDay = await book(bookingType.slug, validBooking("2099-03-08T14:00:00.000Z"));
+
+            expect(onTransitionDay.status).toBe(200);
+        });
+
+        it("still refuses a second booking on a fall-back day (2099-11-01, US) once maxPerDay is reached, even one in the last real local hour", async () => {
+            const bookingType = await createBookingType({ maxPerDay: 1, availability: dstAvailability });
+            // 2099-11-01 23:00 local (EST) - inside the 25th, "extra" real hour a flat +24h `dayEnd` for 2099-11-01
+            // wrongly excludes, undercounting the day's own bookings.
+            const lateOnTransitionDay = await book(bookingType.slug, validBooking("2099-11-02T04:00:00.000Z"));
+            expect(lateOnTransitionDay.status).toBe(200);
+
+            // A second booking earlier the same local day. Correct behavior refuses it (maxPerDay already used by
+            // the late booking above); the bug would miss the late booking entirely and wrongly allow this one.
+            const secondSameDay = await book(bookingType.slug, validBooking("2099-11-01T15:00:00.000Z"));
+
+            expect(secondSameDay.status).toBe(409);
+        });
+    });
+
     describe("host endpoints", () => {
         describe("GET /host", () => {
             it("Lists the booking type's bookings for the mailbox owner.", async () => {
@@ -917,6 +965,16 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
                 const result = await request(server.getApplication())
                     .get(`${baseUrl}/host?bookingTypeUid=${bookingType.uid}`)
                     .set("Authorization", "jwt " + otherUserToken);
+
+                expect(result.status).toBe(403);
+            });
+
+            it("Rejects a trusted admin-role caller with no explicit grant on the mailbox (403).", async () => {
+                const bookingType = await createBookingType();
+
+                const result = await request(server.getApplication())
+                    .get(`${baseUrl}/host?bookingTypeUid=${bookingType.uid}`)
+                    .set("Authorization", "jwt " + adminToken);
 
                 expect(result.status).toBe(403);
             });
@@ -974,6 +1032,18 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
                 const result = await request(server.getApplication())
                     .post(`${baseUrl}/host/${created.body.uid}/location`)
                     .set("Authorization", "jwt " + otherUserToken)
+                    .send({ locationVideoUrl: "https://meet.example.com/new" });
+
+                expect(result.status).toBe(403);
+            });
+
+            it("Rejects a trusted admin-role caller with no explicit grant on the booking's mailbox (403).", async () => {
+                const bookingType = await createBookingType();
+                const created = await book(bookingType.slug, validBooking());
+
+                const result = await request(server.getApplication())
+                    .post(`${baseUrl}/host/${created.body.uid}/location`)
+                    .set("Authorization", "jwt " + adminToken)
                     .send({ locationVideoUrl: "https://meet.example.com/new" });
 
                 expect(result.status).toBe(403);

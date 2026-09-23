@@ -18,12 +18,19 @@ export interface BookingProfileSuiteContext {
     strangerToken: string;
     viewerUid: string;
     viewerToken: string;
-    /** A user with the trusted `admin` role, who passes every mailbox permission check - even for a mailbox that doesn't exist. */
+    /** A user with the trusted `admin` role and no explicit grant on any fixture mailbox. `ACLUtils.hasPermission()`
+     * would treat this role as always-permitted, but `requireMailboxPermission()` strips it first
+     * (`stripTrustedRoles()`, see `util/RouteAccessUtils.ts`) - so this token is refused exactly like `strangerToken`
+     * everywhere below, unless a test explicitly grants it access. */
     adminToken: string;
     /** A mailbox `ownerUid` has every permission on. */
     createMailbox: (ownerUid: string) => Promise<{ uid: string }>;
     /** An ownerless mailbox whose only ACL grant is `actions` for `userUid`. */
     createSharedMailbox: (userUid: string, actions: string[]) => Promise<{ uid: string }>;
+    /** Deletes just the mailbox row of `mailboxUid`, leaving its `AccessControlList` (so a previously-granted
+     * caller still passes the permission check but finds no mailbox) - simulates a mailbox gone out from under a
+     * still-valid grant, without relying on any role bypassing the permission check. */
+    deleteMailboxRow: (mailboxUid: string) => Promise<void>;
     /** The stored profile row of `uid`, if any. */
     findProfile: (uid: string) => Promise<any | undefined>;
     /** Saves a profile row, with `data` on it. */
@@ -70,6 +77,16 @@ export function bookingProfileSuite(ctx: BookingProfileSuiteContext): void {
             expect(await ctx.findProfile(mailbox.uid)).toBeUndefined();
         });
 
+        it("refuses a trusted admin-role caller with no explicit grant on the mailbox (403), exactly like a stranger - the framework's 'trusted users always have permission' shortcut never applies to someone else's mailbox", async () => {
+            expect((await view(mailbox.uid, ctx.adminToken)).status).toBe(403);
+            for (const image of ["avatar", "banner"]) {
+                expect((await upload(mailbox.uid, image, png(), "image/png", ctx.adminToken)).status).toBe(403);
+                expect((await remove(mailbox.uid, image, ctx.adminToken)).status).toBe(403);
+            }
+            expect(ctx.blobStore().blobs.size).toBe(0);
+            expect(await ctx.findProfile(mailbox.uid)).toBeUndefined();
+        });
+
         it("lets a caller who can only read the mailbox see the profile, but not change it (403)", async () => {
             const shared = await ctx.createSharedMailbox(ctx.viewerUid, [ACLAction.READ, ACLAction.LIST, ACLAction.COUNT, ACLAction.EXISTS]);
 
@@ -90,17 +107,24 @@ export function bookingProfileSuite(ctx: BookingProfileSuiteContext): void {
         });
 
         it("reports a mailbox that doesn't exist as missing (404) - but only to a caller the permission check lets through", async () => {
-            const missing: string = "no-such-mailbox@example.com";
+            // Permission is checked first: a caller with no grant at all can't tell a mailbox that's gone from one
+            // they simply can't access (403, tested elsewhere). Observing the 404 branch therefore needs a REAL
+            // grant on a mailbox uid that no longer names a mailbox - simulated by deleting just the mailbox row,
+            // leaving its `AccessControlList` (and so `ownerToken`'s FULL grant) in place.
+            await ctx.deleteMailboxRow(mailbox.uid);
 
-            expect((await view(missing, ctx.adminToken)).status).toBe(404);
-            expect((await upload(missing, "avatar", png(), "image/png", ctx.adminToken)).status).toBe(404);
-            expect((await remove(missing, "banner", ctx.adminToken)).status).toBe(404);
-            // Everyone else can't tell it from one they can't access.
-            expect((await view(missing)).status).toBe(403);
-            expect((await upload(missing, "avatar", png())).status).toBe(403);
+            expect((await view(mailbox.uid)).status).toBe(404);
+            expect((await upload(mailbox.uid, "avatar", png(), "image/png")).status).toBe(404);
+            expect((await remove(mailbox.uid, "banner")).status).toBe(404);
+            // Everyone else - including a trusted admin-role caller with no grant on this uid - can't tell it from
+            // one they simply can't access.
+            for (const token of [ctx.strangerToken, ctx.adminToken]) {
+                expect((await view(mailbox.uid, token)).status).toBe(403);
+                expect((await upload(mailbox.uid, "avatar", png(), "image/png", token)).status).toBe(403);
+            }
             // Nothing was made for a mailbox that isn't there.
             expect(ctx.blobStore().blobs.size).toBe(0);
-            expect(await ctx.findProfile(missing)).toBeUndefined();
+            expect(await ctx.findProfile(mailbox.uid)).toBeUndefined();
         });
 
         it("refuses a mailbox param that is only whitespace (403), and serves nothing for it (404)", async () => {

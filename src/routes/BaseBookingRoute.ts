@@ -44,6 +44,7 @@ import {
 } from "@rapidmx/restapi";
 import { generateCandidateSlots, normalizeSlug, subtractBusy } from "../util/BookingUtils.js";
 import { Booking, BookingLocationOption, BookingLocationType, BookingMeetingType, BookingProfile, BookingStatus, BookingType } from "../models/types.js";
+import { stripTrustedRoles } from "../util/RouteAccessUtils.js";
 import { profileImageVersion } from "./BaseBookingProfileRoute.js";
 const { Config, Inject, Logger } = ObjectDecorators;
 const { Description, Summary } = DocDecorators;
@@ -304,6 +305,13 @@ export abstract class BaseBookingRoute<
 
     @Inject(ACLUtils)
     private aclUtils?: ACLUtils;
+
+    /** Roles `@rapidrest/service-core`'s `ACLUtils.hasPermission()` treats as always-permitted - which must never
+     * apply to another user's mailbox. `requireMailboxPermission()` below strips these via `stripTrustedRoles()`
+     * before ever consulting `hasPermission()`, so an admin-role caller with no actual grant on the booking's
+     * mailbox is denied the `/host` endpoints exactly like a stranger - see `util/RouteAccessUtils.ts` for why
+     * this package can't just import `@rapidmx/restapi`'s own equivalent fix. */
+    private trustedRoles: string[] = ["admin"];
 
     @Config("trusted_proxies", [])
     private trustedProxies: string[] = [];
@@ -610,8 +618,19 @@ export abstract class BaseBookingRoute<
         for (const part of parts) {
             values[part.type] = part.value;
         }
-        const dayStart: Date = convertLocalToUtc(Number(values.year), Number(values.month), Number(values.day), 0, 0, 0, bookingType.timezone)!;
-        const dayEnd: Date = new Date(dayStart.getTime() + MS_PER_DAY - 1);
+        const year: number = Number(values.year);
+        const month: number = Number(values.month);
+        const day: number = Number(values.day);
+        const dayStart: Date = convertLocalToUtc(year, month, day, 0, 0, 0, bookingType.timezone)!;
+        // The next LOCAL calendar day's own midnight, not `dayStart` plus a flat 24h: a flat offset overshoots
+        // into the following day's first hour on a spring-forward date (23 real hours) and falls short of
+        // midnight on a fall-back date (25 real hours), either double-counting or under-counting bookings across
+        // the DST boundary. `Date.UTC` here is pure Y/M/D calendar arithmetic (never an instant) so it rolls the
+        // month/year over correctly - the exact pattern `generateCandidateSlots()` uses to step across days -
+        // and the resulting Y/M/D is resolved back through `convertLocalToUtc()` exactly like `dayStart` was.
+        const nextDay: Date = new Date(Date.UTC(year, month - 1, day + 1));
+        const nextDayStart: Date = convertLocalToUtc(nextDay.getUTCFullYear(), nextDay.getUTCMonth() + 1, nextDay.getUTCDate(), 0, 0, 0, bookingType.timezone)!;
+        const dayEnd: Date = new Date(nextDayStart.getTime() - 1);
 
         return await this.bookingRepo!.count(
             {
@@ -1201,9 +1220,10 @@ export abstract class BaseBookingRoute<
 
     /** Rejects a caller without `action` on `mailboxUid` with a `403`. Mirrors `BaseBookingProfileRoute`'s helper
      * of the same shape - the two classes don't share a base, so it's duplicated rather than invented a shared
-     * one for two call sites. */
+     * one for two call sites. `user` is stripped of its trusted roles first (see `trustedRoles`'s own doc
+     * comment) so an admin-role caller with no grant on this mailbox is refused exactly like anyone else. */
     private async requireMailboxPermission(mailboxUid: string, user: JWTUser | undefined, action: string): Promise<void> {
-        if (!mailboxUid || !(await this.aclUtils!.hasPermission(user, mailboxUid, action))) {
+        if (!mailboxUid || !(await this.aclUtils!.hasPermission(stripTrustedRoles(user, this.trustedRoles), mailboxUid, action))) {
             throw new ApiError(ApiErrors.AUTH_PERMISSION_FAILURE, 403, ApiErrorMessages.AUTH_PERMISSION_FAILURE);
         }
     }

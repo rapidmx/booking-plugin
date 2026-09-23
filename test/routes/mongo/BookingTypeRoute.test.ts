@@ -484,5 +484,6 @@ describe("Route:BookingTypeMongo Tests", () => {
         createMailbox,
         createCalendarFolder,
         body,
+        route: () => objectFactory.getInstance("routes.BookingTypeRoute"),
     });
 });

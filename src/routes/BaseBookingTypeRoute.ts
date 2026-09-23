@@ -17,6 +17,7 @@ import {
 import { BaseScopedChildRoute, Folder, FolderType } from "@rapidmx/restapi";
 import { normalizeSlug, validateAvailability } from "../util/BookingUtils.js";
 import { Booking, BookingType } from "../models/types.js";
+import { stripTrustedRoles } from "../util/RouteAccessUtils.js";
 const { Param, Query, Request, User: AuthUser } = RouteDecorators;
 
 /**
@@ -30,8 +31,11 @@ const { Param, Query, Request, User: AuthUser } = RouteDecorators;
  * availability configuration is validated (a `400`) so an unbookable or non-expandable configuration can't be
  * persisted and then silently produce zero slots forever.
  *
- * A booking type may be moved to another mailbox (`update()` with a new `mailboxUid`), or deleted (`delete()`), only
- * while it has no bookings - both go through `requireNoBookings()`. A move would strand a booking's calendar event
+ * A booking type may be moved to another mailbox (`update()` with a new `mailboxUid`), or deleted, only while it has
+ * no bookings - `update()`'s and `delete()`'s own checks both go through `requireNoBookings()`, and so does
+ * `truncate()`'s (the bulk `DELETE /api/mail/booking-types?mailboxUid=...` `BaseScopedChildRoute` also exposes,
+ * gated only by `ACLAction.TRUNCATE` on the mailbox - without this override it would hard-delete every matched
+ * booking type, bookings included, with no per-row check at all). A move would strand a booking's calendar event
  * in the old mailbox's calendar (its manage link resolves the mailbox from the booking, not from the still-live
  * booking type); a delete is worse - it would leave the booking's `bookingTypeUid` naming nothing at all, and every
  * one of `BaseBookingRoute`'s per-booking endpoints (`manage()`/`cancel()`/`reschedule()`/`hostListBookings()`/
@@ -140,7 +144,10 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
      * calendar folder of the booking type's own mailbox that the caller can read - otherwise a caller managing
      * their own mailbox's booking types could point one at somebody else's calendar, publishing its free/busy
      * through the public slots endpoint and planting booking events in it. `400` for a folder of the wrong
-     * mailbox or type (or no such folder), `403` when the caller can't read it.
+     * mailbox or type (or no such folder), `403` when the caller can't read it. `user` is stripped of its
+     * trusted roles first (`stripTrustedRoles()`, `this.trustedRoles` inherited from `ModelRoute`) so an
+     * admin-role caller with no actual grant on the folder's mailbox is refused exactly like a stranger - see
+     * `util/RouteAccessUtils.ts` for why this package can't just import `@rapidmx/restapi`'s own equivalent fix.
      */
     private async requireBookableFolder(mailboxUid: unknown, calendarFolderUid: unknown, user: JWTUser | undefined): Promise<void> {
         if (typeof calendarFolderUid !== "string" || !calendarFolderUid) {
@@ -151,7 +158,7 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
         }
         const folder: Folder | undefined = await this.folderRepo.findOne(calendarFolderUid, { ignoreACL: true });
         // Permission first, so a caller who can't read the folder learns nothing about which mailbox it belongs to.
-        if (folder && !(await this.aclUtils!.hasPermission(user, folder.uid, ACLAction.READ))) {
+        if (folder && !(await this.aclUtils!.hasPermission(stripTrustedRoles(user, this.trustedRoles), folder.uid, ACLAction.READ))) {
             throw new ApiError(ApiErrors.AUTH_PERMISSION_FAILURE, 403, ApiErrorMessages.AUTH_PERMISSION_FAILURE);
         }
         if (!folder || (folder as any).deleted || folder.mailboxUid !== mailboxUid || folder.type !== FolderType.CALENDAR) {
@@ -228,5 +235,72 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
     ): Promise<void> {
         await this.requireNoBookings(id, "deleted");
         return await super.delete(id, version, purge, req, user);
+    }
+
+    /** `BaseScopedChildRoute.scopedFilter()`'s own key-stripping is `private`, so this pre-check can't call it -
+     * this is that same, identically-named helper (restapi keeps one private copy per file that needs it -
+     * `BaseFolderRoute.ts`/`BaseMailboxRoute.ts`/`BaseAttachmentRoute.ts` all do the same), duplicated here rather
+     * than imported so this route's own scope (`mailboxUid`) can never be widened by a client-sent `$or`/`$and`,
+     * a dotted `$`-segment path, or the `shareToken`/`scope` selectors, which name no real field. */
+    private stripUnsafeTruncateQueryKeys(query: any): Record<string, any> {
+        const result: Record<string, any> = {};
+        for (const [key, value] of Object.entries(query ?? {})) {
+            if (key === "shareToken" || key === "scope" || key.split(".").some((segment) => segment.startsWith("$"))) {
+                continue;
+            }
+            result[key] = value;
+        }
+        return result;
+    }
+
+    /** Pages through every `BookingType` that `truncate()`'s own query is about to match - a bare, unpaginated
+     * `find()` call silently truncates at this framework's default page size, and `truncate()`'s guard below must
+     * see every row it's about to permanently delete, not a sample (mirrors `BaseScopedChildRoute.
+     * findAllForTruncate()`'s identical rationale - that helper is `private` too, so this can't call it either). */
+    private async findAllMatchingTruncate(params: any, query: any, mailboxUid: string, user: JWTUser | undefined): Promise<T[]> {
+        const filter: any = { ...this.stripUnsafeTruncateQueryKeys(query), ...params, mailboxUid: ModelUtils.literal(mailboxUid) };
+        const pageSize = 500;
+        const all: T[] = [];
+        for (let page = 0; ; page++) {
+            const batch: T[] = await this.repoUtils!.find({ ...filter, limit: pageSize, page }, {
+                limit: pageSize,
+                page,
+                user,
+                ignoreACL: true,
+            });
+            all.push(...batch);
+            if (batch.length < pageSize) {
+                break;
+            }
+        }
+        return all;
+    }
+
+    /**
+     * Refuses (`409`) the ENTIRE bulk delete if ANY `BookingType` matching the truncate filter still has a
+     * booking - the same rule `delete()` enforces one row at a time, extended to the bulk endpoint
+     * `BaseScopedChildRoute` also exposes and that this class used to leave completely unguarded
+     * (`DELETE /api/mail/booking-types?mailboxUid=...`, no `/:id`). Without this override, `super.truncate()` is a
+     * genuine, permanent bulk delete gated only by `ACLAction.TRUNCATE` on the mailbox scope - which a mailbox
+     * owner holds by default via `ACLAction.FULL` (see `BaseMailboxRoute.ts`) - so an ordinary host could
+     * hard-delete every booking type in their own mailbox, including ones with active bookings, in a single
+     * request that never touches `requireNoBookings()` at all, orphaning every booking under every purged type
+     * exactly like an unguarded `delete()` used to (see the class doc comment).
+     *
+     * Refuses the whole call rather than silently truncating only the rows with no bookings and skipping the
+     * rest: a partial truncate would be a surprising, hard-to-predict result for a bulk "delete everything
+     * matching this filter" request, whereas a single clear `409` tells the caller exactly what to do - delete
+     * the booking types without bookings individually, or disable/resolve the rest first (see `delete()`'s own
+     * doc comment for why disabling, not deleting, is the right move for a link with existing bookings).
+     */
+    public async truncate(@Param() params: any, @Query() query: any, @AuthUser user?: JWTUser): Promise<void> {
+        const mailboxUid: unknown = query?.[this.scopeProperty];
+        if (typeof mailboxUid === "string" && mailboxUid.length > 0) {
+            const matched: T[] = await this.findAllMatchingTruncate(params, query, mailboxUid, user);
+            for (const existing of matched) {
+                await this.requireNoBookings(existing.uid, "deleted");
+            }
+        }
+        return await super.truncate(params, query, user);
     }
 }
