@@ -52,20 +52,20 @@ const { Get, Param, Post, Query, RateLimit, Request, Validate, User: AuthUser } 
 
 /**
  * The exact npm package name `PluginRegistry.isActive()` checks - see `maybeCreateVideoMeetingJoinUrl()`'s doc
- * comment below. `@rapidmx/videoconf-plugin` is never a hard dependency of this package: this repo's own
+ * comment below. `@rapidmx/meet-plugin` is never a hard dependency of this package: this repo's own
  * `package.json` lists it only under `optionalDependencies` (installed if present, never required), plus a
  * `devDependency` purely so the type-only import below resolves during this package's own build/test/lint.
  */
-const VIDEOCONF_PLUGIN_NAME = "@rapidmx/videoconf-plugin";
+const VIDEOCONF_PLUGIN_NAME = "@rapidmx/meet-plugin";
 
 /**
- * The exact shape of `@rapidmx/videoconf-plugin`'s own small, stable integration function - a type-only query
+ * The exact shape of `@rapidmx/meet-plugin`'s own small, stable integration function - a type-only query
  * (`typeof import(...)`), erased entirely from the compiled output, so referencing it here costs nothing at
  * runtime on a deployment that never installs the package at all (see `maybeCreateVideoMeetingJoinUrl()`'s doc
- * comment). Resolving it during THIS package's own `tsc`/lint/test needs `@rapidmx/videoconf-plugin`'s types
+ * comment). Resolving it during THIS package's own `tsc`/lint/test needs `@rapidmx/meet-plugin`'s types
  * locally, which is exactly what its `devDependency` entry in `package.json` is for.
  */
-type CreateSingleInviteeVideoMeetingFn = typeof import("@rapidmx/videoconf-plugin").createSingleInviteeVideoMeeting;
+type CreateSingleInviteeVideoMeetingFn = typeof import("@rapidmx/meet-plugin").createSingleInviteeVideoMeeting;
 
 /**
  * The concrete `VideoMeeting`/`VideoMeetingInvitee` model classes for one backend (Mongo or SQL) that
@@ -273,7 +273,7 @@ export abstract class BaseBookingRoute<
     protected abstract mailboxClass: any;
 
     /**
-     * Dynamically `import()`s this deployment's installed `@rapidmx/videoconf-plugin`, resolving its concrete
+     * Dynamically `import()`s this deployment's installed `@rapidmx/meet-plugin`, resolving its concrete
      * `VideoMeeting`/`VideoMeetingInvitee` model classes for THIS route's own backend (Mongo or SQL) - `./mongo` or
      * `./sql`, matching `bookingClass`/`mailboxClass`/etc.'s existing per-backend wiring above. `BaseBookingRoute`
      * itself has no notion of "Mongo" vs. "SQL" (see this class's own doc comment), so each concrete subclass
@@ -676,7 +676,7 @@ export abstract class BaseBookingRoute<
 
     /**
      * Mints a private, single-invitee `VideoMeeting` for a video-location booking that has no host-preset
-     * `videoUrl` of its own, via `@rapidmx/videoconf-plugin`'s own small, stable integration function
+     * `videoUrl` of its own, via `@rapidmx/meet-plugin`'s own small, stable integration function
      * (`createSingleInviteeVideoMeeting()`) - if, and only if, that plugin is installed AND active on this
      * deployment. `book()` calls this (only for a `VIDEO` location option whose `videoUrl` is unset) immediately
      * before `persistBooking()`, so the resolved join URL, if any, can be snapshotted onto the new `Booking` row
@@ -695,7 +695,7 @@ export abstract class BaseBookingRoute<
      * identical to "the host hasn't set a video URL yet". **A booking must never fail because of a
      * video-conferencing integration problem.**
      *
-     * `@rapidmx/videoconf-plugin` is never a hard dependency of this package - see `package.json`: it appears only
+     * `@rapidmx/meet-plugin` is never a hard dependency of this package - see `package.json`: it appears only
      * under `optionalDependencies` (installed if present, never required to install this package at all) plus a
      * `devDependency` purely so the type-only import this file uses (`CreateSingleInviteeVideoMeetingFn`) resolves
      * during this package's own build/test/lint - a real `import type`/`typeof import(...)` reference is erased
@@ -1044,7 +1044,7 @@ export abstract class BaseBookingRoute<
         }
 
         // A video location with no host-preset URL of its own gets one minted automatically when
-        // `@rapidmx/videoconf-plugin` is installed and active - see `maybeCreateVideoMeetingJoinUrl()`'s doc
+        // `@rapidmx/meet-plugin` is installed and active - see `maybeCreateVideoMeetingJoinUrl()`'s doc
         // comment. Resolved here (before `persistBooking()`, not inside it) so a video-conferencing integration
         // failure can never roll back, or even touch, the booking's own atomic write. Every other location
         // (including a video one with its own preset `videoUrl`) never even calls it - `resolvedVideoUrl` is then

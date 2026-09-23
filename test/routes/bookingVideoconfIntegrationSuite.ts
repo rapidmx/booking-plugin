@@ -2,9 +2,9 @@
 // Copyright (C) 2026 Jean-Philippe Steinmetz. All rights reserved.
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
-// The optional `@rapidmx/videoconf-plugin` integration (`BaseBookingRoute.maybeCreateVideoMeetingJoinUrl()`) -
+// The optional `@rapidmx/meet-plugin` integration (`BaseBookingRoute.maybeCreateVideoMeetingJoinUrl()`) -
 // identical on both backends. Run from the BookingRoute test files, which supply a started server and fixtures
-// (a mailbox with one calendar folder, recreated before every test) plus the real `@rapidmx/videoconf-plugin`
+// (a mailbox with one calendar folder, recreated before every test) plus the real `@rapidmx/meet-plugin`
 // package (an `optionalDependencies`/`devDependency` entry - see `package.json`) wired into the same test
 // server's own connections (`test/server-{mongo,sql}/models/index.ts`), so this suite exercises the real
 // dynamic-import-and-mint path end to end - not a mock of it. The "package listed active but the import genuinely
@@ -15,7 +15,7 @@ import { PluginRegistry } from "@rapidmx/restapi";
 import { BookingLocationType } from "../../src/models/types.js";
 
 const SLOT_1 = "2099-06-01T13:00:00.000Z";
-const VIDEOCONF_PLUGIN_NAME = "@rapidmx/videoconf-plugin";
+const VIDEOCONF_PLUGIN_NAME = "@rapidmx/meet-plugin";
 
 export interface BookingVideoconfIntegrationSuiteContext {
     app: () => any;
@@ -55,7 +55,7 @@ export function bookingVideoconfIntegrationSuite(ctx: BookingVideoconfIntegratio
     });
     const book = (slug: string, body: any = validBooking()) => request(ctx.app()).post(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${slug}`).send(body);
 
-    describe("optional @rapidmx/videoconf-plugin integration", () => {
+    describe("optional @rapidmx/meet-plugin integration", () => {
         afterEach(() => {
             PluginRegistry.setLoaded([]);
         });

@@ -187,23 +187,23 @@ booker should pick a location (Phone/Video/Other) the host pre-configures per me
   and `test/apps/book`. `test/plugin.test.ts`'s pinned root-export list grew by `BookingLocationType`,
   `MAX_MEETING_TYPES`, `MAX_LOCATION_OPTIONS`. Full suite: 32 files, 722 tests, lint and both `tsc` builds clean.
 
-### 2026-09-22 - A video location option mints its own link when `@rapidmx/videoconf-plugin` is active
+### 2026-09-22 - A video location option mints its own link when `@rapidmx/meet-plugin` is active
 
 `BaseBookingRoute.book()` resolves a video location's `videoUrl` before `persistBooking()`'s own transaction, not
 inside it - a video-integration failure can never touch the booking's atomic write. When the chosen location is
 Video and has no preset `videoUrl`, `maybeCreateVideoMeetingJoinUrl()` checks `PluginRegistry.isActive("@rapidmx/
 videoconf-plugin")` first (zero import attempted for a deployment that never installed it - the common case),
 then has each concrete route (`BookingRouteMongo`/`BookingRouteSQL`) resolve its own backend via a new abstract
-`importVideoconfBackend()` (`await import("@rapidmx/videoconf-plugin/mongo"|"/sql")`, its own try/catch), and
+`importVideoconfBackend()` (`await import("@rapidmx/meet-plugin/mongo"|"/sql")`, its own try/catch), and
 calls the plugin's exported `createSingleInviteeVideoMeeting()` (an in-process function call, not an HTTP
 round-trip to its own mounted route - both plugins run in the same server process). Any failure anywhere in this
 chain - the package genuinely missing despite `isActive()` saying yes, the call itself throwing - is logged and
 `locationVideoUrl` stays unset, exactly like "the host hasn't set one yet" today; a booking is never blocked by a
 video-conferencing failure.
 
-`package.json` gained `@rapidmx/videoconf-plugin` as an `optionalDependencies` entry (a real version range, not
+`package.json` gained `@rapidmx/meet-plugin` as an `optionalDependencies` entry (a real version range, not
 `rapidmx.plugin.requires` - that's a hard install-time dependency this integration deliberately avoids) and as a
-`devDependency` for local type resolution. **Known, unavoidable right now**: `@rapidmx/videoconf-plugin` has never
+`devDependency` for local type resolution. **Known, unavoidable right now**: `@rapidmx/meet-plugin` has never
 been published, so `yarn install` here genuinely 404s on it today - resolves itself the moment it's released;
 verified the wiring anyway by building it and placing a real, untracked copy into `node_modules` for testing,
 removed afterward.

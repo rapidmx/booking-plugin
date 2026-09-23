@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Jean-Philippe Steinmetz
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
-// Simulates `PluginRegistry.isActive("@rapidmx/videoconf-plugin")` reporting true while the actual dynamic
-// `import("@rapidmx/videoconf-plugin/sql")` genuinely fails (an incompatible version installed, a corrupted
+// Simulates `PluginRegistry.isActive("@rapidmx/meet-plugin")` reporting true while the actual dynamic
+// `import("@rapidmx/meet-plugin/sql")` genuinely fails (an incompatible version installed, a corrupted
 // install, or any other reason the active flag and reality disagree) - `BaseBookingRoute
 // .maybeCreateVideoMeetingJoinUrl()`'s own `try`/`catch` must still let the booking succeed with
 // `locationVideoUrl` left unset, exactly as if the plugin were never installed at all. A module-level `vi.mock()`
@@ -25,14 +25,14 @@ import { BookingTypeSQL } from "../../../src/models/sql/BookingTypeSQL.js";
 import { BookingLocationType } from "../../../src/models/types.js";
 import { registerTestDoubles } from "../../testDoubles.js";
 
-vi.mock("@rapidmx/videoconf-plugin/sql", () => {
+vi.mock("@rapidmx/meet-plugin/sql", () => {
     throw new Error("Simulated: package listed active but genuinely unresolvable.");
 });
 
 describe("Route:BookingSQL Tests (videoconf dynamic-import failure)", () => {
     const logger = Logger();
     const objectFactory: ObjectFactory = new ObjectFactory(config, logger);
-    // A minimal fixture WITHOUT `@rapidmx/videoconf-plugin`'s own models registered - see
+    // A minimal fixture WITHOUT `@rapidmx/meet-plugin`'s own models registered - see
     // `test/server-sql-import-failure/models/index.ts`'s doc comment for why this can't reuse `test/server-sql`.
     const server: Server = new Server({ config, basePath: "./test/server-sql-import-failure", logger, objectFactory });
     const baseUrl = "/sql/bookings";
@@ -91,7 +91,7 @@ describe("Route:BookingSQL Tests (videoconf dynamic-import failure)", () => {
     });
 
     it("never fails the booking when the plugin is listed active but the dynamic import genuinely throws", async () => {
-        PluginRegistry.setLoaded([{ name: "@rapidmx/videoconf-plugin", version: "0.1.0" }]);
+        PluginRegistry.setLoaded([{ name: "@rapidmx/meet-plugin", version: "0.1.0" }]);
         const bookingType = await bookingTypeRepo.save(
             new BookingTypeSQL({
                 mailboxUid: mailbox.uid,

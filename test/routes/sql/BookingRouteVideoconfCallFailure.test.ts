@@ -6,8 +6,8 @@
 // `BaseBookingRoute.importVideoconfBackend()`'s OWN dynamic import failing (caught internally, by
 // `BookingRouteSQL.importVideoconfBackend()`'s own `try`/`catch`, well before `maybeCreateVideoMeetingJoinUrl()`'s
 // outer `try`/`catch` is ever reached). This file instead lets `importVideoconfBackend()` succeed (the real,
-// installed `@rapidmx/videoconf-plugin/sql` is left unmocked) and simulates the SECOND dynamic import -
-// `@rapidmx/videoconf-plugin`'s own root entry point, where `createSingleInviteeVideoMeeting` itself lives -
+// installed `@rapidmx/meet-plugin/sql` is left unmocked) and simulates the SECOND dynamic import -
+// `@rapidmx/meet-plugin`'s own root entry point, where `createSingleInviteeVideoMeeting` itself lives -
 // failing instead, which IS caught by `maybeCreateVideoMeetingJoinUrl()`'s own outer `try`/`catch`. Both failure
 // surfaces must independently leave a booking unharmed with `locationVideoUrl` unset.
 import config from "../../config.sql.js";
@@ -23,16 +23,16 @@ import { BookingTypeSQL } from "../../../src/models/sql/BookingTypeSQL.js";
 import { BookingLocationType } from "../../../src/models/types.js";
 import { registerTestDoubles } from "../../testDoubles.js";
 
-vi.mock("@rapidmx/videoconf-plugin", () => {
+vi.mock("@rapidmx/meet-plugin", () => {
     throw new Error("Simulated: the root entry point (createSingleInviteeVideoMeeting's own module) is genuinely unresolvable.");
 });
 
 describe("Route:BookingSQL Tests (videoconf integration call failure)", () => {
     const logger = Logger();
     const objectFactory: ObjectFactory = new ObjectFactory(config, logger);
-    // A minimal fixture WITHOUT `@rapidmx/videoconf-plugin`'s own models registered - see
+    // A minimal fixture WITHOUT `@rapidmx/meet-plugin`'s own models registered - see
     // `test/server-sql-import-failure/models/index.ts`'s doc comment (this file's own real, unmocked
-    // `import("@rapidmx/videoconf-plugin/sql")` only needs the module's class references, not a registered
+    // `import("@rapidmx/meet-plugin/sql")` only needs the module's class references, not a registered
     // datastore, since `createSingleInviteeVideoMeeting()` is never actually reached in this scenario).
     const server: Server = new Server({ config, basePath: "./test/server-sql-import-failure", logger, objectFactory });
     const baseUrl = "/sql/bookings";
@@ -91,7 +91,7 @@ describe("Route:BookingSQL Tests (videoconf integration call failure)", () => {
     });
 
     it("never fails the booking when the plugin is active and its backend resolves, but the root integration module genuinely fails", async () => {
-        PluginRegistry.setLoaded([{ name: "@rapidmx/videoconf-plugin", version: "0.1.0" }]);
+        PluginRegistry.setLoaded([{ name: "@rapidmx/meet-plugin", version: "0.1.0" }]);
         const bookingType = await bookingTypeRepo.save(
             new BookingTypeSQL({
                 mailboxUid: mailbox.uid,

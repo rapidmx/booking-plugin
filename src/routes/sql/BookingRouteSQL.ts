@@ -28,15 +28,15 @@ export class BookingRouteSQL extends BaseBookingRoute<BookingTypeSQL, BookingSQL
 
     /**
      * This backend's half of `BaseBookingRoute.importVideoconfBackend()`: a dynamic `import()` of
-     * `@rapidmx/videoconf-plugin`'s own `./sql` entry point, matching this route's own backend. Never a static
-     * import - see that method's doc comment on why `@rapidmx/videoconf-plugin` (an `optionalDependencies` entry
+     * `@rapidmx/meet-plugin`'s own `./sql` entry point, matching this route's own backend. Never a static
+     * import - see that method's doc comment on why `@rapidmx/meet-plugin` (an `optionalDependencies` entry
      * of this package - see `package.json`) must only ever be loaded dynamically, guarded by
      * `PluginRegistry.isActive()`. Returns `undefined`, never throws, when the package genuinely isn't
      * resolvable - `maybeCreateVideoMeetingJoinUrl()`'s own `try`/`catch` is defense in depth on top of this.
      */
     protected async importVideoconfBackend(): Promise<{ meetingClass: any; inviteeClass: any } | undefined> {
         try {
-            const mod: any = await import("@rapidmx/videoconf-plugin/sql");
+            const mod: any = await import("@rapidmx/meet-plugin/sql");
             return { meetingClass: mod.VideoMeetingSQL, inviteeClass: mod.VideoMeetingInviteeSQL };
         } catch {
             return undefined;

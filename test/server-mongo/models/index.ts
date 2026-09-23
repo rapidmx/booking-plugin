@@ -7,7 +7,7 @@ export { CalendarEventMongo, FolderMongo, MailboxMongo } from "@rapidmx/restapi/
 export { BookingTypeMongo } from "../../../src/models/mongo/BookingTypeMongo.js";
 export { BookingMongo } from "../../../src/models/mongo/BookingMongo.js";
 export { BookingProfileMongo } from "../../../src/models/mongo/BookingProfileMongo.js";
-// `@rapidmx/videoconf-plugin`'s own models, for real end-to-end coverage of the optional video meeting
+// `@rapidmx/meet-plugin`'s own models, for real end-to-end coverage of the optional video meeting
 // integration (`BaseBookingRoute.maybeCreateVideoMeetingJoinUrl()`) - see `bookingVideoconfIntegrationSuite.ts`.
 // Named, not wildcard, for the same reason as the restapi re-export above.
-export { VideoMeetingMongo, VideoMeetingInviteeMongo } from "@rapidmx/videoconf-plugin/mongo";
+export { VideoMeetingMongo, VideoMeetingInviteeMongo } from "@rapidmx/meet-plugin/mongo";

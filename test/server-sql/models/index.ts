@@ -7,7 +7,7 @@ export { CalendarEventSQL, FolderSQL, MailboxSQL } from "@rapidmx/restapi/sql";
 export { BookingTypeSQL } from "../../../src/models/sql/BookingTypeSQL.js";
 export { BookingSQL } from "../../../src/models/sql/BookingSQL.js";
 export { BookingProfileSQL } from "../../../src/models/sql/BookingProfileSQL.js";
-// `@rapidmx/videoconf-plugin`'s own models, for real end-to-end coverage of the optional video meeting
+// `@rapidmx/meet-plugin`'s own models, for real end-to-end coverage of the optional video meeting
 // integration (`BaseBookingRoute.maybeCreateVideoMeetingJoinUrl()`) - see `bookingVideoconfIntegrationSuite.ts`.
 // Named, not wildcard, for the same reason as the restapi re-export above.
-export { VideoMeetingSQL, VideoMeetingInviteeSQL } from "@rapidmx/videoconf-plugin/sql";
+export { VideoMeetingSQL, VideoMeetingInviteeSQL } from "@rapidmx/meet-plugin/sql";

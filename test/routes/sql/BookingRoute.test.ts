@@ -22,7 +22,7 @@ import { BookingTypeSQL } from "../../../src/models/sql/BookingTypeSQL.js";
 import { CalendarEventSQL, FolderSQL, MailboxSQL } from "@rapidmx/restapi/sql";
 import { BusyStatus, CalendarEventStatus, FolderType, RecipientType, RecurrenceFrequency } from "@rapidmx/restapi";
 import { BookingLocationType, BookingStatus } from "../../../src/models/types.js";
-import { VideoMeetingSQL, VideoMeetingInviteeSQL } from "@rapidmx/videoconf-plugin/sql";
+import { VideoMeetingSQL, VideoMeetingInviteeSQL } from "@rapidmx/meet-plugin/sql";
 import { RecordingMailTransport, registerTestDoubles } from "../../testDoubles.js";
 import { bookingSecuritySuite } from "../bookingSecuritySuite.js";
 import { bookingMailboxSuite } from "../bookingMailboxSuite.js";
@@ -59,7 +59,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
     let bookingRepo: Repository<BookingSQL>;
     let bookingProfileRepo: Repository<BookingProfileSQL>;
     let calendarEventRepo: Repository<CalendarEventSQL>;
-    // `@rapidmx/videoconf-plugin`'s own models, registered via `test/server-sql/models/index.ts` - used only by
+    // `@rapidmx/meet-plugin`'s own models, registered via `test/server-sql/models/index.ts` - used only by
     // `bookingVideoconfIntegrationSuite`'s real, end-to-end coverage of the optional video meeting integration.
     let videoMeetingRepo: Repository<VideoMeetingSQL>;
     let videoMeetingInviteeRepo: Repository<VideoMeetingInviteeSQL>;

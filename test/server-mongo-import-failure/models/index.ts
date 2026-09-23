@@ -1,4 +1,4 @@
-// A minimal twin of `test/server-mongo/models/index.ts`, deliberately WITHOUT the `@rapidmx/videoconf-plugin/mongo`
+// A minimal twin of `test/server-mongo/models/index.ts`, deliberately WITHOUT the `@rapidmx/meet-plugin/mongo`
 // re-export: `BookingRouteVideoconfImportFailure.test.ts` (the only consumer of this fixture) mocks that exact
 // module specifier to simulate its dynamic import genuinely failing, and the real, unmocked `models/index.ts`
 // statically (if indirectly, via the ClassLoader scanning this whole directory tree) imports it for real DB
