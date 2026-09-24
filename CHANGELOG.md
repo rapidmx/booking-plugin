@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-24
+
+### Added
+- Added a requireNoBookings() guard to BaseBookingTypeRoute.delete(), matching update()'s existing mailbox-move guard, so deleting a booking type with active or pending bookings no longer orphans them and breaks manage()/cancel()/reschedule()/hostListBookings()/setBookingLocationVideoUrl() for those bookings
+- Added type: "text" to BookingSQL.locationVideoUrl to match this file's own convention for fields validated past 255 characters, avoiding silent truncation on a MySQL/MariaDB deployment
+- Added regression tests for the new delete() guard to bookingTypeMailboxSuite.ts, covering the 409-with-bookings, 204-with-none, and 403-without-permission cases on both backends
+- Added tests for BookingUtils.validateMeetingTypes() rejecting an invalid meeting-type or location-option uid, an over-long label, and an over-long videoUrl
+- Added a test confirming BaseBookingTypeRoute.normalizeMeetingTypeUids() preserves an edited-in-place meeting type's and location option's existing uid instead of minting a new one
+- Added tests for BaseBookingRoute's bookerPhone and bookerLocationInstructions length and type validation, checked unconditionally regardless of the chosen location type
+- Added tests for the /host endpoints' 400 and 404 paths, including clearing a previously-set video URL back to unset and a booking whose own booking type was deleted
+- Added a test for manageUrl() omitting the cancel/reschedule line when no mail:booking:public_url is configured
+- Added a test for checkBookingRateLimit() falling back to an unknown address bucket when called with no HttpRequest, the same category as the existing "params HTTP can't produce" cases
+- Added tests completing a phone and an "other" location booking on the public booking page, and for its error message when reloading slots for a newly-chosen meeting type fails
+- Added tests for the booking-type detail page's bookings list load failure, its loading indicator, saving a video URL's own failure path, clearing a video URL, and one booking's save leaving a sibling booking untouched
+- Added tests for MeetingTypesEditor's remove-location-option success path, editing a label or video URL back to unset, and editing one meeting type or location option without touching its sibling
+- Added test/apps/book/_locationSummary.test.ts covering the phone and "other" location summary cases, only video having been exercised before via the pages
+- Added a test for the new-booking-type page's "every meeting type needs a name and at least one location option" validation guard
+- Added v8 ignore comments to two genuinely unreachable guards in the public booking page's handleLoadMore() and handleSubmit(), both already provably dead given the surrounding effect/button-render guarantees
+- Added stripTrustedRoles() (new src/util/RouteAccessUtils.ts) and apply it at three raw ACLUtils.hasPermission() call sites (BaseBookingProfileRoute.requireMailboxPermission(), BaseBookingRoute.requireMailboxPermission(), BaseBookingTypeRoute.requireBookableFolder()) so a trusted admin-role caller with no explicit grant on a mailbox is refused exactly like a stranger instead of bypassing the check
+- Added regression tests for all three fixes across both backends and document the findings in NOTES.md
+
+### Changed
+- Override truncate() on BaseBookingTypeRoute to run requireNoBookings() against every matched booking type before deleting any of them, refusing the whole bulk call (409) if any has a booking, closing the gap delete()'s own guard left open via the inherited, unguarded bulk endpoint
+- Upgraded rapidrest and rapidmx deps
+
+### Fixed
+- Fixed this package's pre-existing coverage gate gap, closing it from 97.96%/94.7%/98.06%/97.96% to 100%/98.88%/100%/100% against its own 100/95/100/100 gate
+- Fixed countBookingsOnDay() to resolve a local calendar day's end via convertLocalToUtc() on the next calendar day instead of adding a flat 24 hours, so maxPerDay is no longer wrongly enforced or wrongly bypassed on a DST spring-forward or fall-back day
+
 ## [0.4.0] - 2026-09-23
 
 ### Changed
@@ -58,7 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed the booking pages drawing the deployment logo a second time under the branding header, and pushing the branding footer off screen
 
-[Unreleased]: https://github.com/RapidMX/booking/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/RapidMX/booking/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/RapidMX/booking/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/RapidMX/booking/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/RapidMX/booking/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/RapidMX/booking/compare/v0.1.0...v0.2.0

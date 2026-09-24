@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.5.0
+
 ### Fixes
 
 - **Bulk-deleting (truncating) a mailbox's booking types no longer bypasses the same-mailbox bookings guard.**
