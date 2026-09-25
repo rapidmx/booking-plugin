@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Raise the `@rapidmx/restapi` peer floor to `>=0.22.1`, `@rapidmx/react-shared` to `>=0.18.0` and `@rapidmx/web-client` to `>=0.16.0`, with the development dependencies and `resolutions` at the same versions, so the plugin is built and tested against the current packages.
+
 ### Added
 
 - **A new booking puts a notification in the host's Inbox.** A booking used to appear only as an event on the calendar, so nothing in the inbox said one had been made. The host now gets an unread message, "New booking: <meeting> with <booker>" (or "Booking request: ..." when the booking type requires approval, saying it is awaiting their confirmation), with who booked, when in the booking type's own time zone, where or how the meeting happens, the booker's notes and time zone, and a Reply-To of the booker. It is filed straight into the mailbox, the way the server files its delivery failure notices - it is not mailed - so it doesn't depend on the mail transport or on a message from a local address passing SPF/DMARC on the way back in, and it is shown at once in a connected client. It comes from `bookings@<the mailbox's domain>` and is marked `Auto-Submitted`. It carries no iCalendar invite: a `text/calendar` part would be processed as a meeting request and put a second event on the calendar. It is best-effort like the booker's confirmation (a failure is logged, never thrown at the booker) and is for a new booking only - not a booker's cancel or reschedule. Needs the `Message` model of the server's backend, which the server always has.
