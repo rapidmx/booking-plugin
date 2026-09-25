@@ -13,12 +13,12 @@ import * as uuid from "uuid";
 import { BookingMongo } from "../../../src/models/mongo/BookingMongo.js";
 import { BookingProfileMongo } from "../../../src/models/mongo/BookingProfileMongo.js";
 import { BookingTypeMongo } from "../../../src/models/mongo/BookingTypeMongo.js";
-import { CalendarEventMongo, FolderMongo, MailboxMongo } from "@rapidmx/restapi/mongo";
+import { CalendarEventMongo, FolderMongo, MailboxMongo, MessageMongo } from "@rapidmx/restapi/mongo";
 import { BusyStatus, CalendarEventStatus, FolderType, RecipientType, RecurrenceFrequency } from "@rapidmx/restapi";
 import { BookingLocationType, BookingStatus } from "../../../src/models/types.js";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { VideoMeetingMongo, VideoMeetingInviteeMongo } from "@rapidmx/meet-plugin/mongo";
-import { RecordingMailTransport, registerTestDoubles } from "../../testDoubles.js";
+import { InMemoryBlobStore, RecordingMailTransport, registerTestDoubles } from "../../testDoubles.js";
 import { bookingSecuritySuite } from "../bookingSecuritySuite.js";
 import { bookingMailboxSuite } from "../bookingMailboxSuite.js";
 import { bookingVideoconfIntegrationSuite } from "../bookingVideoconfIntegrationSuite.js";
@@ -67,6 +67,8 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
     let videoMeetingInviteeRepo: MongoRepository<VideoMeetingInviteeMongo>;
     let aclRepo: MongoRepository<any>;
     let mailTransport: RecordingMailTransport;
+    let blobStore: InMemoryBlobStore;
+    let messageRepo: MongoRepository<MessageMongo>;
 
     let mailbox: MailboxMongo;
     let calendarFolder: FolderMongo;
@@ -163,12 +165,14 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
             bookingRepo = conn.getMongoRepository("BookingMongo");
             bookingProfileRepo = conn.getMongoRepository("BookingProfileMongo");
             calendarEventRepo = conn.getMongoRepository("CalendarEventMongo");
+            messageRepo = conn.getMongoRepository("MessageMongo");
             videoMeetingRepo = conn.getMongoRepository("VideoMeetingMongo");
             videoMeetingInviteeRepo = conn.getMongoRepository("VideoMeetingInviteeMongo");
         } else {
             throw new Error("Could not find mongo connection");
         }
         mailTransport = objectFactory.getInstance<RecordingMailTransport>("MailTransport")!;
+        blobStore = objectFactory.getInstance<InMemoryBlobStore>("BlobStore")!;
     });
 
     afterAll(async () => {
@@ -185,6 +189,7 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
             bookingRepo,
             bookingProfileRepo,
             calendarEventRepo,
+            messageRepo,
             videoMeetingRepo,
             videoMeetingInviteeRepo,
         ]) {
@@ -197,6 +202,7 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
             }
         }
         mailTransport.sent = [];
+        blobStore.blobs.clear();
 
         mailbox = await mailboxRepo.save(
             new MailboxMongo({
@@ -401,6 +407,214 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
             const raw: string = mailTransport.sent[0].raw.toString();
             expect(raw).toContain(`/manage/${result.body.manageToken}`);
             expect(raw).toMatch(/^From: "?Ada Lovelace"? </m);
+        });
+
+        it("Puts the video call's URL in the event's location and describes the booking in its description.", async () => {
+            const bookingType = await createBookingType();
+
+            const result = await book(bookingType.slug, validBooking());
+
+            expect(result.status).toBe(200);
+            const events = await calendarEventRepo.find({}).toArray();
+            expect(events[0].location).toBe("https://meet.example.com/ada");
+            expect(events[0].description).toBe(
+                "Booked by Grace Hopper <grace@example.com>\nVideo call: https://meet.example.com/ada\nNotes: Looking forward to it.",
+            );
+            // The link is clickable in the host's own calendar, and the booker's manage link is not in the event at all.
+            expect(events[0].descriptionHtml).toContain('href="https://meet.example.com/ada"');
+            expect(events[0].descriptionHtml).toContain("Looking forward to it.");
+            expect(events[0].description).not.toContain("/manage/");
+            // The invitation the booker is mailed carries the location too.
+            const raw: string = mailTransport.sent[0].raw.toString();
+            expect(raw).toContain("LOCATION:https://meet.example.com/ada");
+        });
+
+        it("Puts a phone booking's number in the event's location and description.", async () => {
+            const bookingType = await createBookingType({
+                meetingTypes: [
+                    { uid: "mt-phone", name: "Phone Call", durationMinutes: 60, locationOptions: [{ uid: "lo-phone", type: BookingLocationType.PHONE }] },
+                ],
+            });
+
+            const result = await book(bookingType.slug, {
+                ...validBooking(),
+                meetingTypeUid: "mt-phone",
+                locationOptionUid: "lo-phone",
+                bookerPhone: "1234567890",
+            });
+
+            expect(result.status).toBe(200);
+            const events = await calendarEventRepo.find({}).toArray();
+            expect(events[0].location).toBe("Phone: 1234567890");
+            expect(events[0].description).toContain("Phone: call Grace Hopper at 1234567890.");
+        });
+
+        it("Puts an other-location booking's instructions in the event's location and description, and none for a video call with no link yet.", async () => {
+            const bookingType = await createBookingType({
+                meetingTypes: [
+                    { uid: "mt-other", name: "In Person", durationMinutes: 60, locationOptions: [{ uid: "lo-other", type: BookingLocationType.OTHER, label: "Cafe" }] },
+                    { uid: "mt-video", name: "Video", durationMinutes: 60, locationOptions: [{ uid: "lo-video", type: BookingLocationType.VIDEO }] },
+                ],
+            });
+
+            expect(
+                (await book(bookingType.slug, { ...validBooking(SLOT_1), meetingTypeUid: "mt-other", locationOptionUid: "lo-other", bookerLocationInstructions: "Meet at  the\ncorner." })).status,
+            ).toBe(200);
+            expect((await book(bookingType.slug, { ...validBooking(SLOT_2), meetingTypeUid: "mt-video", locationOptionUid: "lo-video" })).status).toBe(200);
+
+            const events = await calendarEventRepo.find({}).toArray();
+            const other = events.find((event) => event.title.startsWith("In Person"))!;
+            const video = events.find((event) => event.title.startsWith("Video"))!;
+            // A single line, so a calendar shows it as a place.
+            expect(other.location).toBe("Meet at the corner.");
+            expect(other.description).toContain("Cafe: Meet at  the\ncorner.");
+            // Nothing to show yet: no location rather than a placeholder in a field that opens as a link.
+            expect(video.location).toBeFalsy();
+            expect(video.description).toContain("Video call: the meeting link hasn't been set yet.");
+        });
+
+        it("Escapes the booker's own text in the event's HTML description.", async () => {
+            const bookingType = await createBookingType();
+
+            const result = await book(bookingType.slug, {
+                ...validBooking(),
+                bookerName: "Grace <b>Hopper</b>",
+                bookerNotes: '<script>alert(1)</script> & "quotes"',
+            });
+
+            expect(result.status).toBe(200);
+            const events = await calendarEventRepo.find({}).toArray();
+            expect(events[0].descriptionHtml).not.toContain("<script");
+            expect(events[0].descriptionHtml).not.toContain("<b>");
+            expect(events[0].descriptionHtml).toContain("&lt;script&gt;");
+            // The plain text keeps what was typed.
+            expect(events[0].description).toContain("<script>alert(1)</script>");
+        });
+
+        it("Gives the event a standard 15 minute reminder.", async () => {
+            const bookingType = await createBookingType();
+
+            await book(bookingType.slug, validBooking());
+
+            const events = await calendarEventRepo.find({}).toArray();
+            expect(events[0].reminderMinutesBeforeStart).toBe(15);
+        });
+
+        it("Files a notification of the new booking in the host's Inbox, replyable to the booker and carrying no invite.", async () => {
+            const bookingType = await createBookingType();
+
+            const result = await book(bookingType.slug, validBooking());
+
+            expect(result.status).toBe(200);
+            const messages = await messageRepo.find({}).toArray();
+            expect(messages).toHaveLength(1);
+            const message = messages[0];
+            expect(message.mailboxUid).toBe(mailbox.uid);
+            expect(message.subject).toBe("New booking: Intro Call with Grace Hopper");
+            expect(message.flags.read).toBe(false);
+            expect(message.recipients.map((recipient: any) => recipient.address)).toEqual([mailbox.primarySmtpAddress]);
+            expect(message.from.displayName).toBe("Bookings");
+            expect(message.bodyPreview).toContain("Grace Hopper has booked 'Intro Call'.");
+            // In the Inbox (created when the mailbox had none), whose counts follow.
+            const inbox: any = (await folderRepo.find({}).toArray()).find((folder: any) => folder.uid === message.folderUid);
+            expect(inbox.type).toBe(FolderType.INBOX);
+            expect(inbox.unreadCount).toBe(1);
+            expect(inbox.totalCount).toBe(1);
+
+            const raw: string = (await blobStore.get(message.bodyBlobKey)).toString();
+            expect(raw).toMatch(/^Subject: New booking: Intro Call with Grace Hopper\r?$/m);
+            expect(raw).toMatch(/^Reply-To: "?Grace Hopper"? <grace@example.com>\r?$/m);
+            expect(raw).toMatch(/^Auto-Submitted: auto-generated\r?$/m);
+            expect(raw).toContain("Grace Hopper has booked 'Intro Call'.");
+            // In the booking type's own time zone (America/New_York), 13:00Z on 2099-06-01 being 9:00 AM.
+            expect(raw).toContain("When: Monday, June 1, 2099, 9:00 AM - 10:00 AM (America/New_York)");
+            expect(raw).toContain("Video call: https://meet.example.com/ada");
+            expect(raw).toContain("Booker's time zone: America/Chicago");
+            expect(raw).not.toContain("awaiting your confirmation");
+            // An invite to the host would be read as a meeting request and put a second event on the calendar.
+            expect(raw).not.toContain("text/calendar");
+            expect(raw).not.toContain("/manage/");
+            // Filed, not mailed: only the booker's confirmation went through the transport.
+            expect(mailTransport.sent).toHaveLength(1);
+            expect(mailTransport.sent[0].envelopeTo).toEqual(["grace@example.com"]);
+        });
+
+        it("Words the host's notification as a request when the booking type requires approval.", async () => {
+            const bookingType = await createBookingType({ requiresApproval: true });
+
+            await book(bookingType.slug, validBooking());
+
+            const message = (await messageRepo.find({}).toArray())[0];
+            expect(message.subject).toBe("Booking request: Intro Call with Grace Hopper");
+            const raw: string = (await blobStore.get(message.bodyBlobKey)).toString();
+            expect(raw).toContain("Grace Hopper has requested a booking of 'Intro Call'.");
+            expect(raw).toContain("This booking is awaiting your confirmation.");
+        });
+
+        it("Keeps a booker's line breaks out of the host's notification headers and out of lines of its own in the body.", async () => {
+            const bookingType = await createBookingType();
+
+            const result = await book(bookingType.slug, { ...validBooking(), bookerName: "Grace\r\nBcc: attacker@example.com" });
+
+            expect(result.status).toBe(200);
+            const message = (await messageRepo.find({}).toArray())[0];
+            // A name with line breaks is not used as one (`safeDisplayName()`): the booker is named by address.
+            expect(message.subject).toBe("New booking: Intro Call with grace@example.com");
+            const raw: string = (await blobStore.get(message.bodyBlobKey)).toString();
+            expect(raw).not.toMatch(/^Bcc:/im);
+            expect(raw).toContain("Booked by Grace Bcc: attacker@example.com <grace@example.com>");
+            expect((await calendarEventRepo.find({}).toArray())[0].description).toContain("Booked by Grace Bcc: attacker@example.com <grace@example.com>");
+        });
+
+        it("Still books, and still mails the booker, when the host's notification can't be stored.", async () => {
+            const bookingType = await createBookingType();
+            vi.spyOn(blobStore, "put").mockRejectedValueOnce(new Error("disk is full"));
+
+            const result = await book(bookingType.slug, validBooking());
+
+            expect(result.status).toBe(200);
+            expect(mailTransport.sent).toHaveLength(1);
+            expect(await messageRepo.count()).toBe(0);
+        });
+
+        it("Removes the notification's stored body when its message can't be written, and still books.", async () => {
+            const bookingType = await createBookingType();
+            // The first booking makes the route build its repositories.
+            expect((await book(bookingType.slug, validBooking(SLOT_1))).status).toBe(200);
+            const route: any = objectFactory.getInstance("routes.BookingRoute");
+            vi.spyOn(route.messageRepo, "create").mockRejectedValueOnce(new Error("database is down"));
+
+            const result = await book(bookingType.slug, validBooking(SLOT_2));
+
+            expect(result.status).toBe(200);
+            expect(await messageRepo.count()).toBe(1);
+            // Only the first booking's body is left.
+            expect(blobStore.blobs.size).toBe(1);
+        });
+
+        it("Still books when the unused body of a notification that couldn't be written can't be removed either.", async () => {
+            const bookingType = await createBookingType();
+            expect((await book(bookingType.slug, validBooking(SLOT_1))).status).toBe(200);
+            const route: any = objectFactory.getInstance("routes.BookingRoute");
+            vi.spyOn(route.messageRepo, "create").mockRejectedValueOnce(new Error("database is down"));
+            blobStore.failNextDelete = true;
+
+            const result = await book(bookingType.slug, validBooking(SLOT_2));
+
+            expect(result.status).toBe(200);
+            expect(blobStore.blobs.size).toBe(2);
+        });
+
+        it("Reminds the booker too: the invitation they are mailed carries the event's reminder as an alarm.", async () => {
+            const bookingType = await createBookingType();
+
+            await book(bookingType.slug, validBooking());
+
+            const raw: string = mailTransport.sent[0].raw.toString();
+            expect(raw).toContain("BEGIN:VALARM");
+            expect(raw).toContain("TRIGGER:-PT15M");
+            // Inside the event, not after it.
+            expect(raw.indexOf("BEGIN:VALARM")).toBeLessThan(raw.indexOf("END:VEVENT"));
         });
 
         it("Omits the cancel/reschedule link from the booking mail when no public booking URL is configured.", async () => {
@@ -854,8 +1068,8 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
 
         expect(result.status).toBe(200);
         const folders = await folderRepo.find({}).toArray();
-        expect(folders).toHaveLength(1);
-        expect(folders[0].type).toBe(FolderType.CALENDAR);
+        // One calendar folder, and the Inbox the host's notification of the booking is filed in.
+        expect(folders.map((folder: any) => folder.type).sort()).toEqual([FolderType.CALENDAR, FolderType.INBOX].sort());
     });
 
     it("Rate limits repeated booking attempts against the same booking type (429).", async () => {
@@ -998,6 +1212,77 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
             it("Lets the mailbox owner set a video booking's location URL.", async () => {
                 const bookingType = await createBookingType();
                 const created = await book(bookingType.slug, validBooking());
+
+                const result = await request(server.getApplication())
+                    .post(`${baseUrl}/host/${created.body.uid}/location`)
+                    .set("Authorization", "jwt " + ownerToken)
+                    .send({ locationVideoUrl: "https://meet.example.com/new" });
+
+                expect(result.status).toBe(200);
+                expect(result.body.locationVideoUrl).toBe("https://meet.example.com/new");
+            });
+
+            it("Updates the booking's calendar event to the new link and mails the booker the updated invitation, with the manage link and the reminder.", async () => {
+                const bookingType = await createBookingType();
+                const created = await book(bookingType.slug, validBooking());
+
+                const result = await request(server.getApplication())
+                    .post(`${baseUrl}/host/${created.body.uid}/location`)
+                    .set("Authorization", "jwt " + ownerToken)
+                    .send({ locationVideoUrl: "https://meet.example.com/new" });
+
+                expect(result.status).toBe(200);
+                const events = await calendarEventRepo.find({}).toArray();
+                expect(events[0].location).toBe("https://meet.example.com/new");
+                expect(events[0].description).toContain("Video call: https://meet.example.com/new");
+                expect(events[0].descriptionHtml).toContain('href="https://meet.example.com/new"');
+                expect(events[0].sequence).toBe(1);
+                // Sent, and stamped so MeetingSchedulingJob doesn't send a second, generic one.
+                expect(events[0].inviteSequenceSent).toBe(1);
+                expect(mailTransport.sent).toHaveLength(2);
+                expect(mailTransport.sent[1].envelopeTo).toEqual(["grace@example.com"]);
+                const raw: string = mailTransport.sent[1].raw.toString();
+                expect(raw).toContain("LOCATION:https://meet.example.com/new");
+                expect(raw).toContain(`/manage/${created.body.manageToken}`);
+                expect(raw).toContain("TRIGGER:-PT15M");
+                expect(raw).toContain("SEQUENCE:1");
+            });
+
+            it("Takes the link out of the booking's calendar event when it is cleared.", async () => {
+                const bookingType = await createBookingType();
+                const created = await book(bookingType.slug, validBooking());
+
+                await request(server.getApplication())
+                    .post(`${baseUrl}/host/${created.body.uid}/location`)
+                    .set("Authorization", "jwt " + ownerToken)
+                    .send({ locationVideoUrl: "" });
+
+                const events = await calendarEventRepo.find({}).toArray();
+                expect(events[0].location).toBeFalsy();
+                expect(events[0].description).toContain("Video call: the meeting link hasn't been set yet.");
+            });
+
+            it("Leaves the invitation to MeetingSchedulingJob when the host's mailbox no longer exists.", async () => {
+                const bookingType = await createBookingType();
+                const created = await book(bookingType.slug, validBooking());
+                await mailboxRepo.clear();
+
+                const result = await request(server.getApplication())
+                    .post(`${baseUrl}/host/${created.body.uid}/location`)
+                    .set("Authorization", "jwt " + ownerToken)
+                    .send({ locationVideoUrl: "https://meet.example.com/new" });
+
+                expect(result.status).toBe(200);
+                const events = await calendarEventRepo.find({}).toArray();
+                expect(events[0].sequence).toBe(1);
+                expect(events[0].inviteSequenceSent).toBe(0);
+                expect(mailTransport.sent).toHaveLength(1);
+            });
+
+            it("Still sets the link when the booking's calendar event has been deleted.", async () => {
+                const bookingType = await createBookingType();
+                const created = await book(bookingType.slug, validBooking());
+                await calendarEventRepo.clear();
 
                 const result = await request(server.getApplication())
                     .post(`${baseUrl}/host/${created.body.uid}/location`)

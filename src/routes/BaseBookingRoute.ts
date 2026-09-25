@@ -14,6 +14,7 @@ import {
     DocDecorators,
     HttpRequest,
     ModelUtils,
+    NotificationUtils,
     ObjectFactory,
     RateLimiter,
     RepoUtils,
@@ -28,21 +29,34 @@ import {
     Folder,
     FolderType,
     Mailbox,
+    MessageImportance,
     PluginRegistry,
     RecipientType,
     asEntity,
     buildEventIcs,
     coerceCalendarEventDates,
+    boundIndexedValue,
     computeBusyWindows,
     convertLocalToUtc,
+    deriveConversationId,
     findOrCreateWellKnownFolder,
+    refreshFolderCounts,
     rateLimitKeyForIp,
     resolveClientIp,
     safeDisplayName,
+    type BlobStore,
     type MailTransport,
     type OccurrenceWindow,
 } from "@rapidmx/restapi";
 import { generateCandidateSlots, normalizeSlug, subtractBusy } from "../util/BookingUtils.js";
+import {
+    BOOKING_REMINDER_MINUTES,
+    bookingEventDescription,
+    bookingEventLocation,
+    formatBookingWhen,
+    withReminderAlarm,
+    type BookingEventDetails,
+} from "../util/BookingEventUtils.js";
 import { Booking, BookingLocationOption, BookingLocationType, BookingMeetingType, BookingProfile, BookingStatus, BookingType } from "../models/types.js";
 import { stripTrustedRoles } from "../util/RouteAccessUtils.js";
 import { profileImageVersion } from "./BaseBookingProfileRoute.js";
@@ -272,6 +286,7 @@ export abstract class BaseBookingRoute<
     protected abstract calendarEventClass: any;
     protected abstract folderClass: any;
     protected abstract mailboxClass: any;
+    protected abstract messageClass: any;
 
     /**
      * Dynamically `import()`s this deployment's installed `@rapidmx/meet-plugin`, resolving its concrete
@@ -296,12 +311,19 @@ export abstract class BaseBookingRoute<
     private calendarEventRepo?: RepoUtils<CE>;
     private folderRepo?: RepoUtils<F>;
     private mailboxRepo?: RepoUtils<M>;
+    private messageRepo?: RepoUtils<any>;
 
     @Inject("MailTransport")
     private mailTransport?: MailTransport;
 
     @Inject(RateLimiter)
     private rateLimiter?: RateLimiter;
+
+    @Inject("BlobStore")
+    private blobStore?: BlobStore;
+
+    @Inject(NotificationUtils)
+    private notificationUtils?: NotificationUtils;
 
     @Inject(ACLUtils)
     private aclUtils?: ACLUtils;
@@ -364,6 +386,12 @@ export abstract class BaseBookingRoute<
             this.folderRepo = await this._objectFactory!.newInstance(RepoUtils, {
                 name: this.folderClass.name,
                 args: [this.folderClass],
+            });
+        }
+        if (!this.messageRepo) {
+            this.messageRepo = await this._objectFactory!.newInstance(RepoUtils, {
+                name: this.messageClass.name,
+                args: [this.messageClass],
             });
         }
         if (!this.mailboxRepo) {
@@ -771,12 +799,28 @@ export abstract class BaseBookingRoute<
     ): Promise<B> {
         const bookerEmail: string = body.bookerEmail!.trim().toLowerCase();
         const confirmed: boolean = !bookingType.requiresApproval;
+        // Only the detail of the chosen location type is kept, on the booking and on the event alike.
+        const details: BookingEventDetails = {
+            locationType: locationOption.type,
+            locationLabel: locationOption.label,
+            bookerPhone: locationOption.type === BookingLocationType.PHONE ? body.bookerPhone?.trim() : undefined,
+            locationVideoUrl: locationOption.type === BookingLocationType.VIDEO ? resolvedVideoUrl : undefined,
+            bookerLocationInstructions: locationOption.type === BookingLocationType.OTHER ? body.bookerLocationInstructions?.trim() : undefined,
+            bookerName: body.bookerName!.trim(),
+            bookerEmail,
+            bookerNotes: body.bookerNotes,
+        };
 
         const event: CE = await this.calendarEventRepo!.create(
             new this.calendarEventClass({
                 folderUid: folder.uid,
                 mailboxUid: bookingType.mailboxUid,
                 title: `${meetingType.name} with ${body.bookerName!.trim()}`,
+                // Where and how the meeting happens, and who booked it with what notes, so the event on the host's own calendar
+                // (and the invitation the booker is mailed) carries them and not only the confirmation mail does.
+                location: bookingEventLocation(details),
+                ...bookingEventDescription(details),
+                reminderMinutesBeforeStart: BOOKING_REMINDER_MINUTES,
                 startDate: slot.start,
                 endDate: slot.end,
                 allDay: false,
@@ -813,15 +857,7 @@ export abstract class BaseBookingRoute<
                 calendarEventUid: event.uid,
                 meetingTypeUid: meetingType.uid,
                 meetingTypeName: meetingType.name,
-                locationType: locationOption.type,
-                locationLabel: locationOption.label,
-                bookerPhone: locationOption.type === BookingLocationType.PHONE ? body.bookerPhone?.trim() : undefined,
-                locationVideoUrl: locationOption.type === BookingLocationType.VIDEO ? resolvedVideoUrl : undefined,
-                bookerLocationInstructions:
-                    locationOption.type === BookingLocationType.OTHER ? body.bookerLocationInstructions?.trim() : undefined,
-                bookerName: body.bookerName!.trim(),
-                bookerEmail,
-                bookerNotes: body.bookerNotes,
+                ...details,
                 bookerTimezone: body.bookerTimezone,
                 startDate: slot.start,
                 endDate: slot.end,
@@ -890,7 +926,7 @@ export abstract class BaseBookingRoute<
                 text: lines.join("\n"),
                 icalEvent: {
                     method: cancelled ? "cancel" : "request",
-                    content: buildEventIcs({ ...event, organizer: { ...event.organizer, displayName: hostName } }, cancelled ? "CANCEL" : "REQUEST"),
+                    content: this.invitationIcs({ ...event, organizer: { ...event.organizer, displayName: hostName } }, cancelled),
                 },
             })
                 .compile()
@@ -902,6 +938,118 @@ export abstract class BaseBookingRoute<
             });
         } catch (err: any) {
             this.logger?.warn(`BookingRoute: failed to send booking mail for ${booking.uid}: ${err.message}`);
+        }
+    }
+
+    /** The iCalendar payload mailed to the booker. An invitation carries the event's reminder as a `VALARM`, so the booker is reminded too. */
+    private invitationIcs(event: CE, cancelled: boolean): string {
+        return cancelled ? buildEventIcs(event, "CANCEL") : withReminderAlarm(buildEventIcs(event, "REQUEST"), event.reminderMinutesBeforeStart);
+    }
+
+    /**
+     * Tells the host that a booking was just made, as an unread message in their own Inbox, so a new appointment is noticed
+     * there rather than only found later on the calendar. It carries what the event carries (who, when, where or how, the
+     * booker's notes) and is replyable to the booker, but never the iCalendar invite itself - that would be processed as another
+     * meeting request and put a second event on the calendar.
+     *
+     * Filed directly into the mailbox (the same way the server files its delivery failure notices) rather than mailed to the
+     * host's own address: the server wrote it, so there is nothing to scan, and it doesn't depend on the mail transport, on the
+     * MTA delivering to itself, or on a message "from" a local address passing SPF/DMARC on the way back in. Best-effort, like
+     * `sendBookingMail()`: the booking is committed, so a failure is logged rather than thrown back at the booker.
+     */
+    private async fileHostNotification(bookingType: BT, booking: B, mailbox: M): Promise<void> {
+        const uid: string = crypto.randomUUID();
+        const bodyBlobKey: string = `booking-notifications/${uid}`;
+        let stored: boolean = false;
+        try {
+            const bookerName: string = safeDisplayName(booking.bookerName) ?? booking.bookerEmail;
+            const lines: string[] = [
+                bookingType.requiresApproval
+                    ? `${bookerName} has requested a booking of '${booking.meetingTypeName}'.`
+                    : `${bookerName} has booked '${booking.meetingTypeName}'.`,
+                `When: ${formatBookingWhen(booking.startDate, booking.endDate, bookingType.timezone)}`,
+                ...bookingEventDescription(booking).description.split("\n"),
+            ];
+            if (booking.bookerTimezone) {
+                lines.push(`Booker's time zone: ${booking.bookerTimezone}`);
+            }
+            if (bookingType.requiresApproval) {
+                lines.push("This booking is awaiting your confirmation.");
+            }
+
+            const domain: string = mailbox.primarySmtpAddress.split("@")[1] || "localhost";
+            const from: string = `bookings@${domain}`;
+            const messageId: string = `${crypto.randomUUID()}@${domain}`;
+            // One line, whatever the booker typed - they only ever supply the name.
+            const subject: string = `${bookingType.requiresApproval ? "Booking request" : "New booking"}: ${booking.meetingTypeName} with ${bookerName}`
+                .replace(/\s+/g, " ")
+                .slice(0, 250);
+            const now: Date = new Date();
+            const text: string = lines.join("\n");
+            const raw: Buffer = await new MailComposer({
+                from: { name: "Bookings", address: from },
+                to: mailbox.primarySmtpAddress,
+                replyTo: { name: safeDisplayName(booking.bookerName) ?? "", address: booking.bookerEmail },
+                subject,
+                messageId: `<${messageId}>`,
+                date: now,
+                // Marks it as machine-made, so an auto-responder stays quiet.
+                headers: { "Auto-Submitted": "auto-generated", "X-Auto-Response-Suppress": "All" },
+                text,
+            })
+                .compile()
+                .build();
+
+            await this.blobStore!.put(bodyBlobKey, raw, { contentType: "message/rfc822" });
+            stored = true;
+            const inbox: F = await findOrCreateWellKnownFolder(this.folderRepo!, this.folderClass, mailbox.uid, FolderType.INBOX);
+            const message: any = await this.messageRepo!.create(
+                new this.messageClass({
+                    uid,
+                    folderUid: inbox.uid,
+                    mailboxUid: mailbox.uid,
+                    messageId: boundIndexedValue(messageId),
+                    subject,
+                    from: { address: from, displayName: "Bookings", type: RecipientType.TO },
+                    recipients: [{ address: mailbox.primarySmtpAddress, type: RecipientType.TO }],
+                    sentDate: now,
+                    receivedDate: now,
+                    bodyBlobKey,
+                    bodyPreview: text.replace(/\s+/g, " ").slice(0, 250),
+                    flags: { read: false, flagged: false, answered: false, forwarded: false },
+                    importance: MessageImportance.NORMAL,
+                    references: [],
+                    conversationId: deriveConversationId([], undefined, messageId),
+                    hasAttachments: false,
+                    labelUids: [],
+                    encrypted: false,
+                    deliveryReceiptPending: false,
+                }),
+                { ignoreACL: true },
+            );
+            // Shown at once in a connected client, and the Inbox's counts follow (best-effort, never throws).
+            this.notificationUtils?.sendMessage(inbox.uid, this.messageClass.name, "create", message);
+            await refreshFolderCounts(
+                {
+                    messageRepo: this.messageRepo!,
+                    folderRepo: this.folderRepo!,
+                    folderClass: this.folderClass,
+                    notificationUtils: this.notificationUtils,
+                    logger: this.logger,
+                },
+                [inbox.uid],
+                { bumpSyncKey: true },
+            );
+        } catch (err: any) {
+            this.logger?.warn(`BookingRoute: failed to file the host notification for booking ${booking.uid}: ${err.message}`);
+            if (stored) {
+                // The message row was never written, so nothing refers to the body.
+                try {
+                    await this.blobStore!.delete(bodyBlobKey);
+                } catch (deleteErr: any) {
+                    this.logger?.warn(`BookingRoute: failed to remove the unused body ${bodyBlobKey}: ${deleteErr.message}`);
+                }
+            }
         }
     }
 
@@ -1089,6 +1237,7 @@ export abstract class BaseBookingRoute<
                 { ignoreACL: true },
             );
         }
+        await this.fileHostNotification(bookingType, booking, mailbox);
 
         return await this.toPublicBooking(booking, bookingType, true);
     }
@@ -1288,6 +1437,36 @@ export abstract class BaseBookingRoute<
             booking,
             { ignoreACL: true },
         );
+
+        // The event on the calendar names the link too (its location and description), so it follows, and the booker is sent the
+        // updated invitation.
+        const event: CE | undefined = await this.calendarEventRepo!.findOne(booking.calendarEventUid, { ignoreACL: true, skipCache: true });
+        if (event && event.status !== CalendarEventStatus.CANCELLED) {
+            const changed: CE = await this.calendarEventRepo!.update(
+                {
+                    uid: event.uid,
+                    version: (event as any).version,
+                    // `null` clears, for the same reason as above.
+                    location: bookingEventLocation(updated) ?? null,
+                    ...bookingEventDescription(updated),
+                    sequence: event.sequence + 1,
+                } as any,
+                event,
+                { ignoreACL: true },
+            );
+            // The booker is mailed the updated invitation at once, like a reschedule, rather than left to MeetingSchedulingJob's
+            // generic one (which has no manage link and no reminder). Without the mailbox there is nobody to send it as, and the
+            // raised `sequence` is left for the job.
+            const mailbox: M | undefined = await this.mailboxRepo!.findOne(booking.mailboxUid, { ignoreACL: true });
+            if (mailbox) {
+                await this.sendBookingMail(bookingType, updated, changed, mailbox, false);
+                await this.calendarEventRepo!.update(
+                    { uid: changed.uid, version: (changed as any).version, inviteSequenceSent: changed.sequence } as any,
+                    changed,
+                    { ignoreACL: true },
+                );
+            }
+        }
         return await this.toPublicBooking(updated, bookingType, false);
     }
 }

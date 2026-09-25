@@ -4,7 +4,7 @@
 // statically (if indirectly, via the ClassLoader scanning this whole directory tree) imports it for real DB
 // entity registration - which would evaluate the mock's throwing factory at server startup, before any test even
 // runs, rather than only when `BaseBookingRoute.importVideoconfBackend()`'s own dynamic `import()` reaches it.
-export { CalendarEventSQL, FolderSQL, MailboxSQL } from "@rapidmx/restapi/sql";
+export { CalendarEventSQL, FolderSQL, MailboxSQL, MessageSQL } from "@rapidmx/restapi/sql";
 export { BookingTypeSQL } from "../../../src/models/sql/BookingTypeSQL.js";
 export { BookingSQL } from "../../../src/models/sql/BookingSQL.js";
 export { BookingProfileSQL } from "../../../src/models/sql/BookingProfileSQL.js";

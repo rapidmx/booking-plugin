@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- **A new booking puts a notification in the host's Inbox.** A booking used to appear only as an event on the calendar, so nothing in the inbox said one had been made. The host now gets an unread message, "New booking: <meeting> with <booker>" (or "Booking request: ..." when the booking type requires approval, saying it is awaiting their confirmation), with who booked, when in the booking type's own time zone, where or how the meeting happens, the booker's notes and time zone, and a Reply-To of the booker. It is filed straight into the mailbox, the way the server files its delivery failure notices - it is not mailed - so it doesn't depend on the mail transport or on a message from a local address passing SPF/DMARC on the way back in, and it is shown at once in a connected client. It comes from `bookings@<the mailbox's domain>` and is marked `Auto-Submitted`. It carries no iCalendar invite: a `text/calendar` part would be processed as a meeting request and put a second event on the calendar. It is best-effort like the booker's confirmation (a failure is logged, never thrown at the booker) and is for a new booking only - not a booker's cancel or reschedule. Needs the `Message` model of the server's backend, which the server always has.
+- **Everyone in a booking gets a 15 minute reminder.** The host's calendar event has one (`reminderMinutesBeforeStart: 15`, which the calendar shows as its notification and `CalendarReminderJob` delivers), and the invitation mailed to the booker carries it as an alarm (`VALARM`, `TRIGGER:-PT15M`), so their calendar reminds them too - whether their client honours an alarm in an invitation is up to it. Bookings had none. A booker's invitation is the confirmation, a reschedule and the update after the host sets the video link.
+
+### Fixed
+
+- **A booking's calendar event now carries its location, and the details of the booking.** The event had no `location`, so the calendar (and the invitation mailed to the booker) showed "Add a room" while the video link was only in the confirmation mail, and its description was empty, so the event on the host's calendar had no link, no phone number and none of the booker's notes. The `location` is the video call's URL, `Phone: <number>` for a phone booking, or the booker's instructions (one line, at most 200 characters) for another location - none for a video call whose link isn't set yet. The description says who booked (name and address), the location line (the link, "call <name> at <number>", or the instructions - the whole text) and the booker's notes, as plain text and as HTML in which the link is clickable; everything the booker typed is escaped, and their name is put on one line. The booker's manage link is deliberately left out, since anyone the calendar is shared with can read the event.
+- **Setting or clearing a booking's video link as the host (`POST /host/:uid/location`) now updates the calendar event too, and mails the booker the updated invitation.** It changed only the booking, so an event created before the link was known kept showing none. The event's location and description follow, its `sequence` is raised, and the booker is sent the updated invitation at once (with the manage link and the reminder, like a reschedule) instead of leaving it to `MeetingSchedulingJob`'s generic one. If the host's mailbox no longer exists nothing is sent from here and the job is left to it.
+
+
 ## v0.5.1
 
 ### Changed
