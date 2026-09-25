@@ -937,10 +937,10 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@rapidmx/booking-plugin@workspace:."
   dependencies:
-    "@rapidmx/meet-plugin": "npm:^0.2.0"
-    "@rapidmx/react-shared": "npm:^0.15.0"
-    "@rapidmx/restapi": "npm:^0.20.1"
-    "@rapidmx/web-client": "npm:^0.14.1"
+    "@rapidmx/meet-plugin": "npm:^0.4.1"
+    "@rapidmx/react-shared": "npm:^0.16.0"
+    "@rapidmx/restapi": "npm:^0.21.1"
+    "@rapidmx/web-client": "npm:^0.15.1"
     "@rapidrest/core": "npm:^6.0.0"
     "@rapidrest/service-core": "npm:^2.3.0"
     "@swc/core": "npm:^1.16.2"
@@ -985,9 +985,9 @@ __metadata:
     vitest: "npm:^5.0.0"
     winston: "npm:^3.19.0"
   peerDependencies:
-    "@rapidmx/react-shared": ">=0.6.0 <1"
-    "@rapidmx/restapi": ">=0.12.0 <1"
-    "@rapidmx/web-client": ">=0.6.0 <1"
+    "@rapidmx/react-shared": ">=0.16.0 <1"
+    "@rapidmx/restapi": ">=0.21.1 <1"
+    "@rapidmx/web-client": ">=0.15.1 <1"
     "@rapidrest/core": 5.x
     "@rapidrest/service-core": 2.x
     react: 19.x
@@ -998,24 +998,24 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@rapidmx/meet-plugin@npm:^0.2.0":
-  version: 0.2.0
-  resolution: "@rapidmx/meet-plugin@npm:0.2.0"
+"@rapidmx/meet-plugin@npm:^0.4.1":
+  version: 0.4.1
+  resolution: "@rapidmx/meet-plugin@npm:0.4.1"
   peerDependencies:
-    "@rapidmx/react-shared": ">=0.14.0 <1"
-    "@rapidmx/restapi": ">=0.17.0 <1"
-    "@rapidmx/web-client": ">=0.11.0 <1"
+    "@rapidmx/react-shared": ">=0.16.0 <1"
+    "@rapidmx/restapi": ">=0.21.1 <1"
+    "@rapidmx/web-client": ">=0.15.1 <1"
     "@rapidrest/core": 5.x
     "@rapidrest/service-core": 2.x
     react: 19.x
     react-dom: 19.x
-  checksum: 10c0/656333cdbab5d667c9651b3340290e43185fe9270f7ce3165b55103283c1cd69ced8304dcd0239b2bb3107ec55c9c377bf69cc2a65fff05b3d1b1f960cd800f7
+  checksum: 10c0/c04cd9e881a092e8f5514715275e1771cd7ead812999193875443ae0ada4957abc17ee6dc1ed76182091a0a6d29eff897cdaa9ba564cc4dbe9a6bec2bd183741
   languageName: node
   linkType: hard
 
-"@rapidmx/react-shared@npm:^0.6.0":
-  version: 0.6.0
-  resolution: "@rapidmx/react-shared@npm:0.6.0"
+"@rapidmx/react-shared@npm:^0.16.0":
+  version: 0.16.0
+  resolution: "@rapidmx/react-shared@npm:0.16.0"
   dependencies:
     "@emoji-mart/data": "npm:^1.2.1"
     "@peculiar/x509": "npm:^2.1.0"
@@ -1030,17 +1030,18 @@ __metadata:
   peerDependencies:
     react: 19.x
     react-dom: 19.x
-  checksum: 10c0/52de1b5acb6ec731600af0019733317ec7b16b2a14dd56f808de80a2ea5a4dbadb7a1af536f960e7c7ea8ccb114fdbf980b72144dbd4ba5570a69a3a6d4dd81b
+  checksum: 10c0/c187d5558a98e1f72c551569e00ca8e6c1765a6bf87520e9a14e78b521297fedd2ece1fe199a9f88df6a2cb5602f1a2e25252b2ba3716f85573162922417cb41
   languageName: node
   linkType: hard
 
-"@rapidmx/restapi@npm:^0.12.0":
-  version: 0.12.0
-  resolution: "@rapidmx/restapi@npm:0.12.0"
+"@rapidmx/restapi@npm:^0.21.1":
+  version: 0.21.1
+  resolution: "@rapidmx/restapi@npm:0.21.1"
   dependencies:
     "@peculiar/x509": "npm:^2.1.0"
     acme-client: "npm:^5.4.0"
     html-to-text: "npm:^10.0.1"
+    htmlparser2: "npm:^10.1.0"
     mailparser: "npm:^3.9.23"
     nodemailer: "npm:^10.0.1"
     pst-extractor: "npm:^1.12.0"
@@ -1052,7 +1053,7 @@ __metadata:
     "@aws-sdk/client-sesv2": 3.x
     "@opensearch-project/opensearch": ">=3.0.0"
     "@rapidrest/core": 5.x
-    "@rapidrest/service-core": ^2.1.0
+    "@rapidrest/service-core": ^2.2.0
     mammoth: ">=1.8.0"
     pdf-parse: ">=1.1.1"
   peerDependenciesMeta:
@@ -1068,18 +1069,18 @@ __metadata:
       optional: true
     pdf-parse:
       optional: true
-  checksum: 10c0/24e8d88e957c8da763462a86562e812f46fd6df09eeae3135fb4879f4abfc046dd456a9c1cd9f04d911c2c9f9cb914da3cde2176fceba52819023d8a9ea3ce41
+  checksum: 10c0/9e19bbe18f0c29662230f3d8a74377d52baf51403fafde627fd62422a215e9c692e70b926588a46abe6d07780aa28c9eff6cc2711c774bcfa829c16855d7653b
   languageName: node
   linkType: hard
 
-"@rapidmx/web-client@npm:^0.6.0":
-  version: 0.6.0
-  resolution: "@rapidmx/web-client@npm:0.6.0"
+"@rapidmx/web-client@npm:^0.15.1":
+  version: 0.15.1
+  resolution: "@rapidmx/web-client@npm:0.15.1"
   dependencies:
     "@dnd-kit/core": "npm:^6.3.1"
     "@journeyapps/wa-sqlite": "npm:^2.0.4"
     "@peculiar/x509": "npm:^2.1.0"
-    "@rapidmx/react-shared": "npm:^0.6.0"
+    "@rapidmx/react-shared": "npm:^0.16.0"
     "@tiptap/core": "npm:^3.31.3"
     "@tiptap/extension-highlight": "npm:^3.31.3"
     "@tiptap/extension-image": "npm:^3.31.3"
@@ -1101,7 +1102,7 @@ __metadata:
   peerDependencies:
     react: 19.x
     react-dom: 19.x
-  checksum: 10c0/45730e4163367fc61b637d1805d52cb81c5de294fe77faa15c7fb23f3be4b7493cc96f4a861f724a5d43250c6b778a020b339e943ce6e956c47dab094ea27a39
+  checksum: 10c0/a9974c5b5f3fd7cc877d95f2f7c041e74f6d6af7448afdb8c17458811ec5e2f05f2cbb577032bbb48cd2eddedba978ce907f5ddf89bbb86f50734ad494685a58
   languageName: node
   linkType: hard
 

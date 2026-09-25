@@ -6,7 +6,17 @@
 // same names `@Inject("...")` resolves. Every integration test that boots the `test/server-mongo`/`test/server-sql`
 // fixture apps registers these before `server.start()`, because `Server` instantiates every route it discovers.
 import { Readable } from "stream";
-import type { BlobPutOptions, BlobRange, BlobStore, MailTransport, OutboundMessage, TransportResult } from "@rapidmx/restapi";
+import type {
+    BlobPutOptions,
+    BlobRange,
+    BlobStore,
+    CandidateResultPage,
+    MailTransport,
+    OutboundMessage,
+    SearchProvider,
+    SearchResultPage,
+    TransportResult,
+} from "@rapidmx/restapi";
 import type { ObjectFactory } from "@rapidrest/service-core";
 
 /**
@@ -74,7 +84,36 @@ export class InMemoryBlobStore implements BlobStore {
  * Registers the test doubles against `objectFactory`. Call this before `server.start()` in any integration test that
  * boots the fixture apps.
  */
+/**
+ * A `SearchProvider` that indexes nothing and finds nothing. `BaseScopedChildRoute` injects one (to drop a purged entity from the
+ * search index), but this plugin's entities are never indexed, so the routes only need one to exist.
+ */
+export class NoopSearchProvider implements SearchProvider {
+    public readonly name: string = "noop";
+
+    public async index(): Promise<void> {
+        // Nothing is indexed.
+    }
+
+    public async bulkIndex(docs: { entityUid: string }[]): Promise<string[]> {
+        return docs.map((doc) => doc.entityUid);
+    }
+
+    public async remove(): Promise<void> {
+        // Nothing was indexed, so there is nothing to remove.
+    }
+
+    public async search(): Promise<SearchResultPage> {
+        return { results: [] };
+    }
+
+    public async candidates(): Promise<CandidateResultPage> {
+        return { candidates: [] };
+    }
+}
+
 export function registerTestDoubles(objectFactory: ObjectFactory): void {
     objectFactory.register(RecordingMailTransport, "MailTransport");
     objectFactory.register(InMemoryBlobStore, "BlobStore");
+    objectFactory.register(NoopSearchProvider, "SearchProvider");
 }
