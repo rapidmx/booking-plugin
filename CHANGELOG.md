@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-25
+
+### Changed
+- Raise the @rapidmx/restapi, @rapidmx/react-shared and @rapidmx/web-client peer floors to 0.21.1, 0.16.0 and 0.15.1, set the development dependencies and resolutions to the same versions and the optional @rapidmx/meet-plugin to 0.4.1, so the plugin is built and tested against the current packages
+- Register a SearchProvider test double in the route tests, since @rapidmx/restapi now injects one into every scoped route
+- Document the change in the release notes
+
 ## [0.5.0] - 2026-09-24
 
 ### Added
@@ -87,7 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed the booking pages drawing the deployment logo a second time under the branding header, and pushing the branding footer off screen
 
-[Unreleased]: https://github.com/RapidMX/booking/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/RapidMX/booking/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/RapidMX/booking/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/RapidMX/booking/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/RapidMX/booking/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/RapidMX/booking/compare/v0.2.0...v0.3.0

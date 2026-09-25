@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.5.1
+
 ### Changed
 
 - Raise the `@rapidmx/restapi` peer floor to `>=0.21.1`, `@rapidmx/react-shared` to `>=0.16.0` and `@rapidmx/web-client` to `>=0.15.1`, with the development dependencies and `resolutions` at the same versions, and the optional `@rapidmx/meet-plugin` to `^0.4.1`, so the plugin is built and tested against the current packages (its route tests register a `SearchProvider` double, which `@rapidmx/restapi` now injects into every scoped route).
