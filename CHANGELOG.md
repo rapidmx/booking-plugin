@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-09-25
+
+### Added
+- Added a notification in the host's Inbox when a booking is made, filed straight into the mailbox rather than mailed, carrying who booked, when, where or how, the booker's notes and a Reply-To of the booker
+- Added a 15 minute reminder to every booking's calendar event, and to the invitation mailed to the booker as an alarm, so everyone in the booking is reminded
+
+### Changed
+- Put the video link, phone number or instructions in the booking's calendar event location, and who booked, where or how and the booker's notes in its description, with the link clickable
+- Update the booking's calendar event and mail the booker the updated invitation when the host sets or clears its video link
+- Keep the new helpers out of the package's public exports
+- Test the location, description, reminder, Inbox notification and updated invitation on both backends, and the helpers on their own
+- Document the change in the release notes and NOTES
+- Raise the @rapidmx/restapi, @rapidmx/react-shared and @rapidmx/web-client peer floors to 0.22.1, 0.18.0 and 0.16.0 and set the development dependencies and resolutions to the same versions, so the plugin is built and tested against the current packages
+- Document the change in the release notes
+
+### Fixed
+- Fixed repository URL
+
 ## [0.5.1] - 2026-09-25
 
 ### Changed
@@ -94,7 +112,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed the booking pages drawing the deployment logo a second time under the branding header, and pushing the branding footer off screen
 
-[Unreleased]: https://github.com/RapidMX/booking/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/rapidmx/booking/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/rapidmx/booking/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/RapidMX/booking/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/RapidMX/booking/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/RapidMX/booking/compare/v0.3.0...v0.4.0
