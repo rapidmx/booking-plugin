@@ -126,7 +126,7 @@
     "rapidmx": {
         "plugin": {
             "apiVersion": 1,
-            "displayName": "Booking pages",
+            "displayName": "Booking",
             "description": "Lets mailbox owners publish booking links that anyone can use to pick an open slot on their calendar, with public booking pages at /book and a Booking Links screen in Settings.",
             "mailboxScopedData": true,
             "settings": [
