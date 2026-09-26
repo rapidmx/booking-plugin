@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-26
+
+### Changed
+- Document that a downstream package's release bump level follows its upstream dependency's, minor for minor, patch for patch and major for major, in NOTES
+- Use @rapidmx/restapi 0.23.0, @rapidmx/react-shared 0.19.0, @rapidmx/web-client 0.17.0 and @rapidmx/meet-plugin 0.5.0, with @rapidrest/react as a peer and development dependency
+- Note the dependency bumps in the release notes
+- Use @rapidmx/web-client 0.17.2, which keeps the mailbox in the address of a page a plugin renders
+- Name web-client 0.17.2 in the release notes
+
 ## [0.5.2] - 2026-09-25
 
 ### Added
@@ -112,7 +121,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed the booking pages drawing the deployment logo a second time under the branding header, and pushing the branding footer off screen
 
-[Unreleased]: https://github.com/rapidmx/booking/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/rapidmx/booking/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/rapidmx/booking/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/rapidmx/booking/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/RapidMX/booking/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/RapidMX/booking/compare/v0.4.0...v0.5.0
