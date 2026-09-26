@@ -376,7 +376,7 @@ describe("uploadBookingProfileImage", () => {
         expect(url).toBe("/api/mail/booking-profiles/jane@example.com/banner");
         expect(init.method).toBe("POST");
         expect(init.credentials).toBe("include");
-        expect(init.headers).toEqual({ "Content-Type": "image/jpeg" });
+        expect(new Headers(init.headers).get("content-type")).toBe("image/jpeg");
         expect(init.body).toBe(blob);
         expect(result).toEqual(profile);
     });
@@ -384,7 +384,24 @@ describe("uploadBookingProfileImage", () => {
     it("falls back to a binary content type for a blob without one", async () => {
         const fetchMock = mockFetch(() => jsonResponse(200, profile));
         await uploadBookingProfileImage("mb1", "avatar", new Blob(["xyz"]));
-        expect((fetchMock.mock.calls[0][1] as RequestInit).headers).toEqual({ "Content-Type": "application/octet-stream" });
+        expect(new Headers((fetchMock.mock.calls[0][1] as RequestInit).headers).get("content-type")).toBe("application/octet-stream");
+    });
+
+    it("echoes the csrf cookie as x-csrf-token, or the server refuses the upload as missing a valid CSRF token", async () => {
+        document.cookie = "csrf=tok-upload";
+        try {
+            const fetchMock = mockFetch(() => jsonResponse(200, profile));
+            await uploadBookingProfileImage("jane@example.com", "avatar", png());
+            expect(new Headers((fetchMock.mock.calls[0][1] as RequestInit).headers).get("x-csrf-token")).toBe("tok-upload");
+        } finally {
+            document.cookie = "csrf=; Max-Age=0; path=/";
+        }
+    });
+
+    it("sends no x-csrf-token when there is no csrf cookie yet", async () => {
+        const fetchMock = mockFetch(() => jsonResponse(200, profile));
+        await uploadBookingProfileImage("jane@example.com", "avatar", png());
+        expect(new Headers((fetchMock.mock.calls[0][1] as RequestInit).headers).has("x-csrf-token")).toBe(false);
     });
 
     it("throws an ApiRequestError with the server's message, status and code", async () => {

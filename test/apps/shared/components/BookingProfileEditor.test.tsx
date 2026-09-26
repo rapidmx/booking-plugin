@@ -210,7 +210,7 @@ describe("BookingProfileEditor", () => {
             expect(post?.[0]).toBe(`${PROFILE_URL}/banner`);
             // What is uploaded is the resized image, as the raw body, with its own type.
             expect((post?.[1] as RequestInit).body).toBe(resized);
-            expect((post?.[1] as RequestInit).headers).toEqual({ "Content-Type": "image/jpeg" });
+            expect(new Headers((post?.[1] as RequestInit).headers).get("content-type")).toBe("image/jpeg");
             expect(screen.getByRole("button", { name: "Change banner" })).toBeInTheDocument();
             expect(screen.getByRole("button", { name: "Remove banner" })).toBeInTheDocument();
         });

@@ -947,33 +947,49 @@ export abstract class BaseBookingRoute<
     }
 
     /**
-     * Tells the host that a booking was just made, as an unread message in their own Inbox, so a new appointment is noticed
-     * there rather than only found later on the calendar. It carries what the event carries (who, when, where or how, the
+     * Tells the host that a booking was just made, moved or cancelled, as an unread message in their own Inbox, so the change is
+     * noticed there rather than only found later on the calendar. It carries what the event carries (who, when, where or how, the
      * booker's notes) and is replyable to the booker, but never the iCalendar invite itself - that would be processed as another
-     * meeting request and put a second event on the calendar.
+     * meeting request and put a second event on the calendar. `previous` is when a rescheduled booking used to be.
      *
      * Filed directly into the mailbox (the same way the server files its delivery failure notices) rather than mailed to the
      * host's own address: the server wrote it, so there is nothing to scan, and it doesn't depend on the mail transport, on the
      * MTA delivering to itself, or on a message "from" a local address passing SPF/DMARC on the way back in. Best-effort, like
      * `sendBookingMail()`: the booking is committed, so a failure is logged rather than thrown back at the booker.
      */
-    private async fileHostNotification(bookingType: BT, booking: B, mailbox: M): Promise<void> {
+    private async fileHostNotification(
+        bookingType: BT,
+        booking: B,
+        mailbox: M,
+        change: "booked" | "rescheduled" | "cancelled" = "booked",
+        previous?: { start: Date; end: Date },
+    ): Promise<void> {
         const uid: string = crypto.randomUUID();
         const bodyBlobKey: string = `booking-notifications/${uid}`;
         let stored: boolean = false;
         try {
             const bookerName: string = safeDisplayName(booking.bookerName) ?? booking.bookerEmail;
+            const meeting: string = `'${booking.meetingTypeName}'`;
+            const headline: string =
+                change === "cancelled"
+                    ? `${bookerName} has cancelled ${meeting}.`
+                    : change === "rescheduled"
+                      ? `${bookerName} has rescheduled ${meeting}.`
+                      : bookingType.requiresApproval
+                        ? `${bookerName} has requested a booking of ${meeting}.`
+                        : `${bookerName} has booked ${meeting}.`;
             const lines: string[] = [
-                bookingType.requiresApproval
-                    ? `${bookerName} has requested a booking of '${booking.meetingTypeName}'.`
-                    : `${bookerName} has booked '${booking.meetingTypeName}'.`,
-                `When: ${formatBookingWhen(booking.startDate, booking.endDate, bookingType.timezone)}`,
-                ...bookingEventDescription(booking).description.split("\n"),
+                headline,
+                `${change === "cancelled" ? "Was" : "When"}: ${formatBookingWhen(booking.startDate, booking.endDate, bookingType.timezone)}`,
             ];
+            if (previous) {
+                lines.push(`Previously: ${formatBookingWhen(previous.start, previous.end, bookingType.timezone)}`);
+            }
+            lines.push(...bookingEventDescription(booking).description.split("\n"));
             if (booking.bookerTimezone) {
                 lines.push(`Booker's time zone: ${booking.bookerTimezone}`);
             }
-            if (bookingType.requiresApproval) {
+            if (bookingType.requiresApproval && change !== "cancelled") {
                 lines.push("This booking is awaiting your confirmation.");
             }
 
@@ -981,9 +997,15 @@ export abstract class BaseBookingRoute<
             const from: string = `bookings@${domain}`;
             const messageId: string = `${crypto.randomUUID()}@${domain}`;
             // One line, whatever the booker typed - they only ever supply the name.
-            const subject: string = `${bookingType.requiresApproval ? "Booking request" : "New booking"}: ${booking.meetingTypeName} with ${bookerName}`
-                .replace(/\s+/g, " ")
-                .slice(0, 250);
+            const subjectPrefix: string =
+                change === "cancelled"
+                    ? "Booking cancelled"
+                    : change === "rescheduled"
+                      ? "Booking rescheduled"
+                      : bookingType.requiresApproval
+                        ? "Booking request"
+                        : "New booking";
+            const subject: string = `${subjectPrefix}: ${booking.meetingTypeName} with ${bookerName}`.replace(/\s+/g, " ").slice(0, 250);
             const now: Date = new Date();
             const text: string = lines.join("\n");
             const raw: Buffer = await new MailComposer({
@@ -1041,7 +1063,7 @@ export abstract class BaseBookingRoute<
                 { bumpSyncKey: true },
             );
         } catch (err: any) {
-            this.logger?.warn(`BookingRoute: failed to file the host notification for booking ${booking.uid}: ${err.message}`);
+            this.logger?.warn(`BookingRoute: failed to file the host ${change} notification for booking ${booking.uid}: ${err.message}`);
             if (stored) {
                 // The message row was never written, so nothing refers to the body.
                 try {
@@ -1283,14 +1305,27 @@ export abstract class BaseBookingRoute<
         // Also on a repeat cancel (idempotent - the same answer, not an error): a first attempt that lost the event write
         // to a racing reschedule left the booking cancelled with its event still live.
         const event: CE | undefined = await this.calendarEventRepo!.findOne(booking.calendarEventUid, { ignoreACL: true, skipCache: true });
-        if (event && event.status !== CalendarEventStatus.CANCELLED) {
+        if (event) {
             // `cancelNoticeSentAt` is deliberately left unset: `MeetingSchedulingJob.sendCancellations()` picks
-            // up any CANCELLED event that hasn't had one and mails the iTIP CANCEL itself.
-            await this.calendarEventRepo!.update(
-                { uid: event.uid, version: (event as any).version, status: CalendarEventStatus.CANCELLED } as any,
-                event,
-                { ignoreACL: true },
-            );
+            // up any CANCELLED or deleted event that hasn't had one and mails the iTIP CANCEL itself.
+            const cancelled: CE =
+                event.status === CalendarEventStatus.CANCELLED
+                    ? event
+                    : await this.calendarEventRepo!.update(
+                          { uid: event.uid, version: (event as any).version, status: CalendarEventStatus.CANCELLED } as any,
+                          event,
+                          { ignoreACL: true },
+                      );
+            // Off the host's calendar, as if they had deleted the meeting themselves (a soft delete, which the job above still
+            // sees): a cancelled event is otherwise still drawn there. Also on a repeat, for a first attempt that stopped short.
+            await this.calendarEventRepo!.delete(cancelled.uid, { ignoreACL: true });
+        }
+        if (updated !== booking) {
+            // Only the request that actually cancelled it tells the host - not a repeat.
+            const mailbox: M | undefined = await this.mailboxRepo!.findOne(booking.mailboxUid, { ignoreACL: true });
+            if (mailbox) {
+                await this.fileHostNotification(bookingType, updated, mailbox, "cancelled");
+            }
         }
         return await this.toPublicBooking(updated, bookingType, false);
     }
@@ -1331,6 +1366,7 @@ export abstract class BaseBookingRoute<
         if (event && mailbox) {
             // Booking first, under its optimistic lock - see `cancel()`: a racing cancel or reschedule makes this a `409`
             // before the event is moved.
+            const previous = { start: booking.startDate, end: booking.endDate };
             const updated: B = await this.bookingRepo!.update(
                 { uid: booking.uid, version: (booking as any).version, startDate: slot.start, endDate: slot.end } as any,
                 booking,
@@ -1349,6 +1385,7 @@ export abstract class BaseBookingRoute<
                 moved,
                 { ignoreACL: true },
             );
+            await this.fileHostNotification(bookingType, updated, mailbox, "rescheduled", previous);
             return await this.toPublicBooking(updated, bookingType, false);
         }
 

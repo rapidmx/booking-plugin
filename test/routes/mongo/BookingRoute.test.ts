@@ -924,6 +924,56 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
             expect(events[0].cancelNoticeSentAt).toBeFalsy();
         });
 
+        it("Takes the event off the host's calendar (a soft delete, still there for MeetingSchedulingJob's CANCEL), even on a repeat cancel.", async () => {
+            const bookingType = await createBookingType();
+            const created = await book(bookingType.slug, validBooking());
+
+            await request(server.getApplication()).post(`${baseUrl}/manage/${created.body.manageToken}/cancel`);
+
+            const route: any = objectFactory.getInstance("routes.BookingRoute");
+            const eventUid: string = (await calendarEventRepo.find({}).toArray())[0].uid;
+            expect((await calendarEventRepo.find({}).toArray())[0].deleted).toBe(true);
+            expect(await route.calendarEventRepo.findOne(eventUid, { ignoreACL: true, skipCache: true })).toBeUndefined();
+
+            // A first attempt that stopped after marking the event cancelled is finished by the next one.
+            await calendarEventRepo.updateOne({ uid: eventUid }, { $set: { deleted: false } });
+            const repeat = await request(server.getApplication()).post(`${baseUrl}/manage/${created.body.manageToken}/cancel`);
+            expect(repeat.status).toBe(200);
+            expect((await calendarEventRepo.find({}).toArray())[0].deleted).toBe(true);
+        });
+
+        it("Files a notification of the cancellation in the host's Inbox, once.", async () => {
+            const bookingType = await createBookingType();
+            const created = await book(bookingType.slug, validBooking());
+
+            await request(server.getApplication()).post(`${baseUrl}/manage/${created.body.manageToken}/cancel`);
+            await request(server.getApplication()).post(`${baseUrl}/manage/${created.body.manageToken}/cancel`);
+
+            const messages = (await messageRepo.find({}).toArray()).filter((message: any) => message.subject.startsWith("Booking cancelled"));
+            expect(messages).toHaveLength(1);
+            const message = messages[0];
+            expect(message.mailboxUid).toBe(mailbox.uid);
+            expect(message.subject).toBe("Booking cancelled: Intro Call with Grace Hopper");
+            expect(message.flags.read).toBe(false);
+            const raw: string = (await blobStore.get(message.bodyBlobKey)).toString();
+            expect(raw).toMatch(/^Reply-To: "?Grace Hopper"? <grace@example.com>\r?$/m);
+            expect(raw).toContain("Grace Hopper has cancelled 'Intro Call'.");
+            expect(raw).toContain("Was: Monday, June 1, 2099, 9:00 AM - 10:00 AM (America/New_York)");
+            expect(raw).not.toContain("text/calendar");
+        });
+
+        it("Still cancels when the host's notification can't be filed.", async () => {
+            const bookingType = await createBookingType();
+            const created = await book(bookingType.slug, validBooking());
+            const route: any = objectFactory.getInstance("routes.BookingRoute");
+            vi.spyOn(route.messageRepo, "create").mockRejectedValueOnce(new Error("database is down"));
+
+            const result = await request(server.getApplication()).post(`${baseUrl}/manage/${created.body.manageToken}/cancel`);
+
+            expect(result.status).toBe(200);
+            expect(result.body.status).toBe(BookingStatus.CANCELLED);
+        });
+
         it("Frees the slot up again for someone else.", async () => {
             const bookingType = await createBookingType();
             const created = await book(bookingType.slug, validBooking());
@@ -993,6 +1043,23 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
             expect(events[0].sequence).toBe(1);
             expect(events[0].inviteSequenceSent).toBe(1);
             expect(mailTransport.sent).toHaveLength(1);
+        });
+
+        it("Files a notification of the move in the host's Inbox, naming the old and the new time.", async () => {
+            const bookingType = await createBookingType();
+            const created = await book(bookingType.slug, validBooking(SLOT_1));
+
+            await reschedule(created.body.manageToken, { start: SLOT_2 });
+
+            const messages = (await messageRepo.find({}).toArray()).filter((message: any) => message.subject.startsWith("Booking rescheduled"));
+            expect(messages).toHaveLength(1);
+            expect(messages[0].subject).toBe("Booking rescheduled: Intro Call with Grace Hopper");
+            expect(messages[0].flags.read).toBe(false);
+            const raw: string = (await blobStore.get(messages[0].bodyBlobKey)).toString();
+            expect(raw).toContain("Grace Hopper has rescheduled 'Intro Call'.");
+            expect(raw).toContain("When: Monday, June 1, 2099, 10:00 AM - 11:00 AM (America/New_York)");
+            expect(raw).toContain("Previously: Monday, June 1, 2099, 9:00 AM - 10:00 AM (America/New_York)");
+            expect(raw).not.toContain("text/calendar");
         });
 
         it("Does not treat the booking's own event as a conflict with itself.", async () => {

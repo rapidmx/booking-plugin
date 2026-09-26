@@ -15,7 +15,7 @@
  * (non-`AppShell`) pages.
  */
 
-import { ApiRequestError, apiFetch, apiUrl } from "@rapidmx/react-shared/util/api.js";
+import { ApiRequestError, apiFetch, apiUrl, withCsrfHeader } from "@rapidmx/react-shared/util/api.js";
 import { ListParams, buildQuery } from "@rapidmx/react-shared/util/apiQuery.js";
 
 export interface BookingAvailabilityWindow {
@@ -351,13 +351,14 @@ export function getBookingProfile(mailboxUid: string): Promise<BookingProfile> {
 
 /**
  * Uploads `file` as the mailbox's avatar or banner. Bypasses `apiFetch` (which always forces `Content-Type:
- * application/json`) because `BaseBookingProfileRoute` reads the raw request body, like the branding uploads do.
+ * application/json`) because `BaseBookingProfileRoute` reads the raw request body, like the branding uploads do. For the
+ * same reason it echoes the CSRF cookie itself (`withCsrfHeader()`), or the server refuses it as missing a valid CSRF token.
  */
 export async function uploadBookingProfileImage(mailboxUid: string, image: BookingProfileImage, file: Blob): Promise<BookingProfile> {
     const res = await fetch(apiUrl(`/mail/booking-profiles/${encodeMailboxUid(mailboxUid)}/${image}`), {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
+        headers: withCsrfHeader({ "Content-Type": file.type || "application/octet-stream" }),
         body: file,
     });
     const contentType = res.headers.get("content-type") ?? "";
