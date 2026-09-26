@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Builds and is tested against `@rapidmx/restapi` 0.23.0, `@rapidmx/react-shared` 0.19.0, `@rapidmx/web-client` 0.17.0 and `@rapidmx/meet-plugin` 0.5.0, and needs those versions or later. web-client 0.17.0 runs its pages on the router of `@rapidrest/react` 2.1.0, which is now a peer dependency (`>=2.1.0 <3`). The plugin's own code is unchanged. A minor bump because all of them are minor releases.
+- Builds and is tested against `@rapidmx/restapi` 0.23.0, `@rapidmx/react-shared` 0.19.0, `@rapidmx/web-client` 0.17.2 and `@rapidmx/meet-plugin` 0.5.0, and needs those versions or later. web-client 0.17.0 runs its pages on the router of `@rapidrest/react` 2.1.0, which is now a peer dependency (`>=2.1.0 <3`). The plugin's own code is unchanged. A minor bump because all of them are minor releases.
 
 ## v0.5.2
 
