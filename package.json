@@ -24,7 +24,7 @@
     "peerDependencies": {
         "@rapidmx/react-shared": ">=0.19.0 <1",
         "@rapidmx/restapi": ">=0.23.0 <1",
-        "@rapidmx/web-client": ">=0.17.0 <1",
+        "@rapidmx/web-client": ">=0.17.2 <1",
         "@rapidrest/core": "5.x",
         "@rapidrest/react": ">=2.1.0 <3",
         "@rapidrest/service-core": "2.x",
@@ -41,7 +41,7 @@
         "@rapidmx/meet-plugin": "^0.5.0",
         "@rapidmx/react-shared": "^0.19.0",
         "@rapidmx/restapi": "^0.23.0",
-        "@rapidmx/web-client": "^0.17.0",
+        "@rapidmx/web-client": "^0.17.2",
         "@rapidrest/core": "^6.0.0",
         "@rapidrest/react": "^2.1.0",
         "@rapidrest/service-core": "^2.3.0",
@@ -89,7 +89,7 @@
     "resolutions": {
         "@rapidmx/react-shared": "^0.19.0",
         "@rapidmx/restapi": "^0.23.0",
-        "@rapidmx/web-client": "^0.17.0"
+        "@rapidmx/web-client": "^0.17.2"
     },
     "packageManager": "yarn@4.5.3",
     "engines": {

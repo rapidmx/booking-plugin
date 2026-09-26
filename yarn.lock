@@ -940,7 +940,7 @@ __metadata:
     "@rapidmx/meet-plugin": "npm:^0.5.0"
     "@rapidmx/react-shared": "npm:^0.19.0"
     "@rapidmx/restapi": "npm:^0.23.0"
-    "@rapidmx/web-client": "npm:^0.17.0"
+    "@rapidmx/web-client": "npm:^0.17.2"
     "@rapidrest/core": "npm:^6.0.0"
     "@rapidrest/react": "npm:^2.1.0"
     "@rapidrest/service-core": "npm:^2.3.0"
@@ -988,7 +988,7 @@ __metadata:
   peerDependencies:
     "@rapidmx/react-shared": ">=0.19.0 <1"
     "@rapidmx/restapi": ">=0.23.0 <1"
-    "@rapidmx/web-client": ">=0.17.0 <1"
+    "@rapidmx/web-client": ">=0.17.2 <1"
     "@rapidrest/core": 5.x
     "@rapidrest/react": ">=2.1.0 <3"
     "@rapidrest/service-core": 2.x
@@ -1076,9 +1076,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@rapidmx/web-client@npm:^0.17.0":
-  version: 0.17.0
-  resolution: "@rapidmx/web-client@npm:0.17.0"
+"@rapidmx/web-client@npm:^0.17.2":
+  version: 0.17.2
+  resolution: "@rapidmx/web-client@npm:0.17.2"
   dependencies:
     "@dnd-kit/core": "npm:^6.3.1"
     "@journeyapps/wa-sqlite": "npm:^2.0.4"
@@ -1106,7 +1106,7 @@ __metadata:
     "@rapidrest/react": ">=2.1.0 <3"
     react: 19.x
     react-dom: 19.x
-  checksum: 10c0/5b2893c8a604facdfafe535df0883ceb0fcfcef36a5ce7a257bb261e2a29e7336f71790a1f9158bc4e67a19c07104ab8c732e45ad4a47e20612d719db049c261
+  checksum: 10c0/e228f875784d3402f454602068875bbc7ee2095eadb2a3447d8539d151b4ca0db08811b4c7c33a6c8e1ab8d4260aa3729a3022b44885cb7f407a63edefdd8e56
   languageName: node
   linkType: hard
 
