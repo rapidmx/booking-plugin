@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-27
+
+### Added
+- Added an Inbox notification to the host when a booker cancels or reschedules a booking
+
+### Changed
+- Test the upload header, the removed event and both notifications on Mongo and SQL
+- Document the changes in the release notes and NOTES
+- Renaming plugin to just "Booking"
+- Updated rapidrest and rapidmx deps
+
+### Fixed
+- Fixed uploading the booking page banner and avatar failing with a missing CSRF token, by sending the csrf cookie as x-csrf-token with withCsrfHeader
+- Fixed a booker's cancel leaving the meeting on the host's calendar, by deleting the cancelled event so MeetingSchedulingJob still mails the cancellation
+
 ## [0.7.0] - 2026-09-26
 
 ### Changed
@@ -131,7 +146,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed the booking pages drawing the deployment logo a second time under the branding header, and pushing the branding footer off screen
 
-[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/rapidmx/booking-plugin/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/rapidmx/booking-plugin/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/rapidmx/booking-plugin/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/rapidmx/booking/compare/v0.5.2...v0.6.0

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.8.0
+
 ### Fixed
 
 - **A booker's cancel now takes the meeting off the host's calendar, and both a cancel and a reschedule put a notification in the host's Inbox.** Cancelling through the manage link only marked the event `cancelled`, which the calendar still draws, so the meeting stayed on the host's calendar (the booker's iTIP `CANCEL` still went out from `MeetingSchedulingJob`). The event is now also deleted, as if the host had deleted the meeting - a soft delete, so the job still sees it and mails the cancellation - and a repeat cancel finishes it if an earlier attempt stopped after marking it cancelled. The host was told nothing when a booking was cancelled or moved, only when one was made: they now get an unread message, "Booking cancelled: <meeting> with <booker>" (when it was) or "Booking rescheduled: <meeting> with <booker>" (the new time and the previous one), filed the same way as the new-booking notification (best-effort, no invite, Reply-To the booker). Only the request that actually cancels notifies; a repeat does not.
