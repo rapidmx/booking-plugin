@@ -95,7 +95,7 @@ describe("plugin manifest", () => {
     it("declares a valid plugin manifest", () => {
         const manifest = parsePluginManifest(pkg);
         expect(typeof manifest).toBe("object");
-        expect(manifest).toEqual(expect.objectContaining({ displayName: "Booking pages", mailboxScopedData: true }));
+        expect(manifest).toEqual(expect.objectContaining({ displayName: "Booking", mailboxScopedData: true }));
     });
 
     it("declares the public booking URL setting, empty by default", () => {
