@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-28
+
+### Changed
+- Rewrite every @rapidmx/react-shared import to @rapidmx/web-client's new lib/ path, and drop the now-unused dependency from peerDependencies, devDependencies and resolutions
+- Drop react-shared from vitest's ssr.noExternal list and update the README's dependency mentions
+- Document the change, and that the existing web-client version constraints won't resolve a lib/-having release until one is published, in NOTES
+- Bump the @rapidmx/web-client dependency (and its resolutions pin) to ^0.22.0, now that a lib/-having release is published, so it actually resolves - the version range alone wasn't enough while resolutions pinned it to ^0.17.2
+
 ## [0.9.0] - 2026-09-27
 
 ### Changed
@@ -154,7 +162,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed the booking pages drawing the deployment logo a second time under the branding header, and pushing the branding footer off screen
 
-[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/rapidmx/booking-plugin/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/rapidmx/booking-plugin/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/rapidmx/booking-plugin/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/rapidmx/booking-plugin/compare/v0.6.1...v0.7.0
