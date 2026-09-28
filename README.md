@@ -54,7 +54,7 @@ slot utilities (`generateCandidateSlots`, `subtractBusy`, `normalizeSlug`, `vali
 `BaseBookingRoute`/`BaseBookingTypeRoute`.
 
 Peer dependencies: `@rapidmx/restapi` 0.12 or later, `@rapidrest/core` 5, `@rapidrest/service-core` 2,
-`@rapidmx/react-shared` 0.6 or later, `@rapidmx/web-client` 0.6 or later, and React 19.
+`@rapidmx/web-client` 0.6 or later, and React 19.
 
 ## Settings
 
@@ -69,10 +69,10 @@ weeks of availability.
 ## UI
 
 The pages are TSX sources under `apps/`, with a compiled copy under `dist/apps` for server-side rendering, the same way
-`@rapidmx/web-client` ships its pages. The server builds them together with its own apps, so they share its React,
-`@rapidmx/react-shared` state and stylesheet. They use only the supported plugin UI surface of `@rapidmx/web-client`
-(`SettingsShell`, `BrandingChrome`) and `@rapidmx/react-shared` (branding, API client, buttons, alerts, forms and
-modals).
+`@rapidmx/web-client` ships its pages. The server builds them together with its own apps, so they share its React
+state and stylesheet. They use only the supported plugin UI surface of `@rapidmx/web-client`: `SettingsShell` and
+`BrandingChrome` from its own paths, plus branding, API client, buttons, alerts, forms and modals from `@rapidmx/
+web-client/lib/*` (formerly `@rapidmx/react-shared`, merged into `web-client` under `lib/`).
 
 - `apps/book`: the public pages. They render their own branding header and footer and get the web client's stylesheet
   from the server's build.
@@ -109,8 +109,8 @@ yarn build                   # tsc into dist/lib, dist/types and dist/apps
 ```
 
 The Mongo suites start `mongodb-memory-server` on port 9999, like the other RapidMX backend repos, so don't run them at
-the same time as another repo's suites. During development `@rapidmx/restapi`, `@rapidmx/react-shared` and
-`@rapidmx/web-client` are linked from sibling checkouts (see `resolutions` in `package.json`); build their `dist` first.
+the same time as another repo's suites. During development `@rapidmx/restapi` and `@rapidmx/web-client` are linked
+from sibling checkouts (see `resolutions` in `package.json`); build their `dist` first.
 
 ## License
 

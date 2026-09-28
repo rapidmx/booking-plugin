@@ -15,8 +15,8 @@
  * (non-`AppShell`) pages.
  */
 
-import { ApiRequestError, apiFetch, apiUrl, withCsrfHeader } from "@rapidmx/react-shared/util/api.js";
-import { ListParams, buildQuery } from "@rapidmx/react-shared/util/apiQuery.js";
+import { ApiRequestError, apiFetch, apiUrl, withCsrfHeader } from "@rapidmx/web-client/lib/util/api.js";
+import { ListParams, buildQuery } from "@rapidmx/web-client/lib/util/apiQuery.js";
 
 export interface BookingAvailabilityWindow {
     dayOfWeek: number;

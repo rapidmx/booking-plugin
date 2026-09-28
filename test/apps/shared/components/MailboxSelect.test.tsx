@@ -6,7 +6,7 @@ import React from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type { Mailbox } from "@rapidmx/react-shared/mail/mailApi.js";
+import type { Mailbox } from "@rapidmx/web-client/lib/mail/mailApi.js";
 import MailboxSelect from "../../../../apps/shared/components/MailboxSelect.js";
 
 function mailbox(uid: string, displayName: string): Mailbox {

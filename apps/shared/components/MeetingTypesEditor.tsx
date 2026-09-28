@@ -4,7 +4,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 import React, { useState } from "react";
 import { BookingLocationOption, BookingLocationType, BookingMeetingType } from "../bookingApi.js";
-import Button from "@rapidmx/react-shared/components/buttons/Button.js";
+import Button from "@rapidmx/web-client/lib/components/buttons/Button.js";
 
 const INPUT_CLASS =
     "text-sm py-2 px-3 border border-border rounded-sm bg-surface text-text focus:outline-none focus:border-primary";

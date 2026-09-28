@@ -50,10 +50,13 @@ Keep entries terse — this is a reference, not a transcript.
   for the full incident writeup and the `CHANGELOG_NOISE_PATTERNS` fix that accompanied it).
 
 - **Portal resolutions are development-only. TODO before the first publish:** `package.json` links
-  `@rapidmx/restapi`, `@rapidmx/react-shared` and `@rapidmx/web-client` with `portal:../<repo>` in both
+  `@rapidmx/restapi` and `@rapidmx/web-client` with `portal:../<repo>` in both
   `devDependencies` and `resolutions`, because the releases that remove booking from core aren't published yet. Replace
-  them with the published versions (restapi >=0.12.0, react-shared >=0.6.0, web-client >=0.6.0), `yarn install`, rerun
+  them with the published versions (restapi >=0.12.0, web-client >=0.6.0), `yarn install`, rerun
   everything, then publish. A portal consumes the sibling's `dist`, so build it there first when it's missing.
+  **Superseded 2026-09-27:** `@rapidmx/react-shared` is gone from this list entirely - see that date's own entry
+  below (it was never a portal link in the checked-in `package.json` anyway; this line had already drifted from the
+  actual semver `resolutions` there before this session).
 - **Data compatibility is the contract.** Keep the model class names (`BookingTypeMongo`, `BookingMongo`,
   `BookingTypeSQL`, `BookingSQL`, which set the entity names), index names and the `BookingType`/`Booking` `@Protect`
   uids exactly as core had them. `test/plugin.test.ts` pins all three. Renaming any of them orphans existing deployments'
@@ -443,6 +446,62 @@ From the first real test on powerlevel.gg: the invite showed "Add a room", the h
 When releasing packages that depend on each other (rapidmx: restapi / react-shared -> web-client -> meet-plugin, booking-plugin, autodiscover, mapi, activesync, server; rapidrest: core / service-core -> auth / auth-server / react / cli and the projects built on them), the bump level of a downstream release matches the level of the upstream release it picks up: an upstream **minor** is a downstream **minor**, an upstream patch a downstream patch, major to major. Where a downstream bump crosses several upstream releases, use the highest level among them, and never choose "patch" just because the downstream's own diff is only a `package.json` bump. Betas keep their prerelease line but follow the same idea - say which level was chosen.
 
 Why: meet-plugin 0.4.2 and booking-plugin 0.5.2 were cut as patches after web-client 0.15.x -> 0.16.0 and react-shared 0.17.0 -> 0.18.0 (both minors), and autodiscover 1.1.1 after restapi 0.20.1 -> 0.21.0; the downstream versions then hid additive behaviour. JP accepted those releases as they were (2026-09-25) and asked for the rule going forward. Releases only happen when JP asks for them.
+
+### 2026-09-27 - `@rapidmx/react-shared` merged into `@rapidmx/web-client`'s new `lib/` subpath
+
+`react-shared` is being folded into `web-client` (concurrent effort in those two sibling repos): its whole `src/`
+tree moves unchanged into `web-client/lib/`, exported at `@rapidmx/web-client/lib/*`. This repo depended on both
+packages and imported directly from `@rapidmx/react-shared/...` in a dozen `apps/` files, so it needed the same
+treatment.
+
+- **Every `@rapidmx/react-shared/<subpath>` import became `@rapidmx/web-client/lib/<same subpath>`** (mechanical
+  `sed 's#@rapidmx/react-shared/#@rapidmx/web-client/lib/#'`, since the subpath tree is unchanged) across:
+  `apps/shared/bookingApi.ts` (`util/api.js`, `util/apiQuery.js`), `apps/shared/components/AvailabilityEditor.tsx`,
+  `MeetingTypesEditor.tsx`, `MailboxSelect.tsx`, `BookingProfileEditor.tsx` (all `components/buttons/Button.js` and
+  friends), `apps/book/index.tsx`, `_layout.tsx`, `_BookingChrome.tsx`, `[mailboxUid]/[slug].tsx`,
+  `manage/[token].tsx`, `apps/settings-booking-types/_layout.tsx`, `index.tsx`, `[uid].tsx`, `new/index.tsx`, and
+  the two test files that import types/helpers directly (`test/apps/shared/bookingApi.test.ts`,
+  `test/apps/shared/components/MailboxSelect.test.tsx`). No `src/` (backend) file ever imported react-shared.
+- **`package.json`**: removed `@rapidmx/react-shared` from `peerDependencies`, `devDependencies` and
+  `resolutions`. Left `@rapidmx/web-client`'s own ranges exactly as they were (peer `>=0.17.2 <1`, dev `^0.21.0`,
+  resolution `^0.17.2`) - not this session's call to invent a new floor; see the version-bump/finding note below.
+- **`vitest.config.ts`**: dropped `@rapidmx/react-shared` from `ssr.noExternal` and its explanatory comment
+  (`@rapidmx/web-client` was already listed separately there).
+- **`README.md`**: updated the peer-dependency line and the two UI/dev-workflow paragraphs that named
+  `@rapidmx/react-shared` directly, to say the functionality now lives under `@rapidmx/web-client/lib/*`.
+- **Pre-existing standing decision above ("Portal resolutions") updated in place** to drop the react-shared
+  mention - see that entry.
+- **Finding, not fixed here**: whether `@rapidmx/web-client`'s *currently constrained* versions (peer floor
+  0.17.2, dev `^0.21.0`, pinned resolution 0.17.2) actually contain the merged `lib/` tree is unknown and
+  unresolvable from this repo alone right now - those ranges were written before the react-shared merge existed,
+  so a version that satisfies them today has no `lib/` at all (confirmed: the installed `node_modules/@rapidmx/
+  web-client@0.17.2` has no `lib/` directory or `./lib/*` export). Once web-client publishes the merge, JP will
+  need to raise these floors to whatever version first ships `lib/` - guessing a number here would just be wrong
+  per this repo's own convention (JP bumps versions himself).
+- **Verification, split by what's actually testable right now:**
+  - `yarn lint` - clean.
+  - `yarn build` (`tsc` + `tsc -p tsconfig.apps.json`) - the `src/`-side `tsc` (library build) is unaffected and
+    clean; the `apps/`-side `tsc` fails with `TS2307: Cannot find module '@rapidmx/web-client/lib/...'` on every
+    rewritten import, plus a handful of knock-on `TS18046: 'err' is of type 'unknown'` in the same files (a
+    downstream symptom of the same unresolved import breaking `instanceof ApiRequestError` narrowing in catch
+    blocks - not a separate bug).
+  - `yarn test` (vitest) - 20 of 39 test files fail with Vite's `Failed to resolve import
+    "@rapidmx/web-client/lib/..."`, all and only the files that touch the rewritten imports (UI pages/components);
+    the other 19 files (backend route/model/util suites, which never imported react-shared) run clean - 599 tests
+    passing, 0 failing among the tests that actually ran.
+  - **Root cause confirmed environmental, not a mistake in this rewrite**: `D:\github\rapidmx\web-client\lib\`
+    does not exist yet in the sibling checkout on this machine, and the currently-installed
+    `node_modules/@rapidmx/web-client` (registry version 0.17.2, matching this repo's own `resolutions`) predates
+    the merge too. This is the expected race the task called out up front - the web-client-side half of this
+    migration hasn't landed (in the sibling repo or on the registry) as of this session. No workaround attempted
+    (no portal-link, no manual `lib/` copy) - re-run `yarn install && yarn build && yarn test` once web-client
+    publishes (or bumps its portal/resolution here) a version that actually has `@rapidmx/web-client/lib/*`.
+  - `@rapidmx/meet-plugin` (optional dependency) itself still peer-depends on `@rapidmx/react-shared` - `yarn
+    install` now warns `doesn't provide @rapidmx/react-shared, requested by @rapidmx/meet-plugin`. Harmless (a
+    warning, not a failure; meet-plugin's own copy still resolves from node_modules since something else pulls
+    it in) and out of scope here - meet-plugin needs its own equivalent migration in its own repo.
+- Did not touch `CHANGELOG.md`/`RELEASE_NOTES.md` (built by `yarn release` from commit messages - see the commit
+  message format entry above) or bump `version`.
 
 ### 2026-09-26 - A booker's cancel removes the event from the calendar, cancel/reschedule notify the host, uploads send the CSRF header
 

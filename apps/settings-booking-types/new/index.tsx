@@ -3,16 +3,16 @@
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
 import React, { FormEvent, useEffect, useState } from "react";
-import { ApiRequestError } from "@rapidmx/react-shared/util/api.js";
-import { Folder, listFolders } from "@rapidmx/react-shared/mail/mailApi.js";
+import { ApiRequestError } from "@rapidmx/web-client/lib/util/api.js";
+import { Folder, listFolders } from "@rapidmx/web-client/lib/mail/mailApi.js";
 import { BookingAvailabilityWindow, BookingLocationType, BookingMeetingType, createBookingType } from "../../shared/bookingApi.js";
 import SettingsShell, { SettingsShellProps, useSettingsShell } from "@rapidmx/web-client/shared/components/settings/layout/SettingsShell.js";
 import AvailabilityEditor from "../../shared/components/AvailabilityEditor.js";
 import MeetingTypesEditor from "../../shared/components/MeetingTypesEditor.js";
 import MailboxSelect from "../../shared/components/MailboxSelect.js";
-import Alert from "@rapidmx/react-shared/components/feedback/Alert.js";
-import Button from "@rapidmx/react-shared/components/buttons/Button.js";
-import FormField from "@rapidmx/react-shared/components/forms/FormField.js";
+import Alert from "@rapidmx/web-client/lib/components/feedback/Alert.js";
+import Button from "@rapidmx/web-client/lib/components/buttons/Button.js";
+import FormField from "@rapidmx/web-client/lib/components/forms/FormField.js";
 
 const INPUT_CLASS =
     "w-full text-sm py-2.5 px-3 border border-border rounded-sm bg-surface text-text focus:outline-none focus:border-primary";

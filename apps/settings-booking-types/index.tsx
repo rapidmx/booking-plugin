@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
 import React, { useEffect, useState } from "react";
-import { ApiRequestError } from "@rapidmx/react-shared/util/api.js";
+import { ApiRequestError } from "@rapidmx/web-client/lib/util/api.js";
 import { BookingType, bookingPublicPath, bookingPublicUrl, listBookingTypes } from "../shared/bookingApi.js";
 import SettingsShell, { SettingsShellProps, useSettingsShell } from "@rapidmx/web-client/shared/components/settings/layout/SettingsShell.js";
 import BookingProfileEditor from "../shared/components/BookingProfileEditor.js";
-import Alert from "@rapidmx/react-shared/components/feedback/Alert.js";
-import Button from "@rapidmx/react-shared/components/buttons/Button.js";
+import Alert from "@rapidmx/web-client/lib/components/feedback/Alert.js";
+import Button from "@rapidmx/web-client/lib/components/buttons/Button.js";
 
 export type SettingsBookingTypesPageProps = Omit<SettingsShellProps, "active">;
 

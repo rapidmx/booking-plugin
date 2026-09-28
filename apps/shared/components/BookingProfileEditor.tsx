@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
 import React, { ChangeEvent, useEffect, useRef, useState } from "react";
-import { ApiRequestError } from "@rapidmx/react-shared/util/api.js";
-import Alert from "@rapidmx/react-shared/components/feedback/Alert.js";
-import Button from "@rapidmx/react-shared/components/buttons/Button.js";
+import { ApiRequestError } from "@rapidmx/web-client/lib/util/api.js";
+import Alert from "@rapidmx/web-client/lib/components/feedback/Alert.js";
+import Button from "@rapidmx/web-client/lib/components/buttons/Button.js";
 import {
     BookingProfile,
     BookingProfileImage,

@@ -4,7 +4,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 import React, { useState } from "react";
 import { BookingAvailabilityWindow } from "../bookingApi.js";
-import Button from "@rapidmx/react-shared/components/buttons/Button.js";
+import Button from "@rapidmx/web-client/lib/components/buttons/Button.js";
 
 const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const INPUT_CLASS =

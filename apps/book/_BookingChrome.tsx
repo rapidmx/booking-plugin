@@ -9,7 +9,7 @@
  * The branding header already carries the deployment's logo, so the page adds none of its own.
  */
 import React, { PropsWithChildren } from "react";
-import { Branding } from "@rapidmx/react-shared/branding/brandingApi.js";
+import { Branding } from "@rapidmx/web-client/lib/branding/brandingApi.js";
 import { BrandingFooter, BrandingHeader } from "@rapidmx/web-client/shared/components/layout/BrandingChrome.js";
 import { bookingProfileImageUrl } from "../shared/bookingApi.js";
 

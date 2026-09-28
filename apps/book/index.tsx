@@ -5,8 +5,8 @@
 /** Reached only by a bare `/book` visit with no mailbox or slug (e.g. a mistyped/incomplete link) — the real booking
  * flow lives at `apps/book/[mailboxUid]/[slug].tsx`, `GET /book/:mailboxUid/:slug`. */
 import React from "react";
-import useBranding from "@rapidmx/react-shared/branding/useBranding.js";
-import Alert from "@rapidmx/react-shared/components/feedback/Alert.js";
+import useBranding from "@rapidmx/web-client/lib/branding/useBranding.js";
+import Alert from "@rapidmx/web-client/lib/components/feedback/Alert.js";
 import { BookingCard, BookingPageShell } from "./_BookingChrome.js";
 
 export default function NoBookingSlugPage() {
