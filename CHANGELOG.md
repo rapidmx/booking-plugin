@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-09-29
+
+### Added
+- Added the missing "Enable corepack" step to the validate job - every other job already has it, and without it yarn runs the container's stock Yarn 1.22.22 instead of the packageManager-pinned version, which refuses to run at all against a packageManager field, so validate's yarn npm audit never actually ran regardless of real findings. Confirmed on rapidmx/server's identical job via a real CI log; this repo's validate job is the same template and shares the same latent gap even where it happened not to manifest yet
+
+### Changed
+- Document the standing wait-for-green-CI-before-releasing rule in NOTES, per JP
+- Bump the @rapidmx/restapi development dependency (and its resolutions pin) to ^0.25.1, now that it's published
+
 ## [0.10.0] - 2026-09-28
 
 ### Changed
@@ -162,7 +171,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed the booking pages drawing the deployment logo a second time under the branding header, and pushing the branding footer off screen
 
-[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/rapidmx/booking-plugin/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/rapidmx/booking-plugin/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/rapidmx/booking-plugin/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/rapidmx/booking-plugin/compare/v0.7.0...v0.8.0
