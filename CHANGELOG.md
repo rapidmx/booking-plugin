@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-09-29
+
+### Fixed
+- Fixed a self-inconsistency the previous commit introduced: revert the @rapidmx/restapi resolutions pin back to ^0.23.0 (its peerDependencies floor, unchanged - there was no real need to force the newer devDependency version project-wide), and raise the @rapidmx/web-client peerDependencies floor itself to >=0.22.0 to match what this repo's own source has required since the react-shared merge (lib/ imports), keeping resolutions at ^0.22.0 correctly matching that real floor
+
 ## [0.10.1] - 2026-09-29
 
 ### Added
@@ -171,7 +176,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed the booking pages drawing the deployment logo a second time under the branding header, and pushing the branding footer off screen
 
-[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/rapidmx/booking-plugin/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/rapidmx/booking-plugin/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/rapidmx/booking-plugin/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/rapidmx/booking-plugin/compare/v0.8.0...v0.9.0
