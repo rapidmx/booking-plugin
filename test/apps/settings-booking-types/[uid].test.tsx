@@ -88,6 +88,13 @@ afterEach(() => {
     window.history.pushState(null, "", "/");
 });
 
+/** Chooses a zone in the Timezone list: opens it, searches for the zone and clicks the option that starts with `name`. */
+async function chooseZone(user: ReturnType<typeof userEvent.setup>, name: string, field: () => HTMLElement = () => screen.getByLabelText("Timezone")) {
+    await user.click(field());
+    await user.type(screen.getByRole("searchbox", { name: "Search time zones" }), name);
+    await user.click(screen.getByRole("option", { name: new RegExp(`^${name}`) }));
+}
+
 describe("BookingTypeDetailPage", () => {
     it("loads and pre-fills the form from the existing booking type", async () => {
         mockShell((url) => (url === "/api/mail/booking-types/bt1" ? jsonResponse(200, bookingType()) : undefined));
@@ -144,8 +151,7 @@ describe("BookingTypeDetailPage", () => {
         const duration = screen.getByLabelText("Duration (minutes)");
         await user.clear(duration);
         await user.type(duration, "45");
-        await user.clear(screen.getByLabelText("Timezone"));
-        await user.type(screen.getByLabelText("Timezone"), "UTC");
+        await chooseZone(user, "UTC");
         const notice = screen.getByLabelText("Minimum notice (minutes)");
         await user.clear(notice);
         await user.type(notice, "30");

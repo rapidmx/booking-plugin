@@ -8,6 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { jsonResponse, mockFetch } from "../../testUtils.js";
 import PublicBookingPage from "../../../../apps/book/[mailboxUid]/[slug].js";
+import { describeTimeZone } from "@rapidmx/web-client/lib/util/timeZone.js";
 
 const publicBookingType = {
     mailboxUid: "jane@example.com",
@@ -343,7 +344,7 @@ describe("PublicBookingPage", () => {
         render(<PublicBookingPage params={{ mailboxUid: "jane@example.com", slug: "intro-call" }} />);
 
         const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        expect(await screen.findByText(`Times are shown in your time zone (${zone}).`)).toBeInTheDocument();
+        expect(await screen.findByText(`Times are shown in your time zone (${describeTimeZone(zone)}).`)).toBeInTheDocument();
     });
 
     it("shows no host hero while loading or when the booking type can't be loaded", async () => {

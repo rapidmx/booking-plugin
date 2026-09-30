@@ -20,6 +20,7 @@ import Button from "@rapidmx/web-client/lib/components/buttons/Button.js";
 import { BookingCard, BookingPageShell } from "../_BookingChrome.js";
 import { LOCATION_TYPE_LABELS, locationSummary } from "../_locationSummary.js";
 import { SlotCursor, appendSlots, fetchSlotPage, initialSlotCursor } from "../_slotPaging.js";
+import { describeTimeZone } from "@rapidmx/web-client/lib/util/timeZone.js";
 
 const INPUT_CLASS =
     "w-full text-base py-3 px-3.5 border border-border rounded-md bg-surface text-text focus:outline-none focus:border-primary";
@@ -279,7 +280,7 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
                                 <h2 className="text-lg font-semibold mb-1">Select a time</h2>
                                 {/* The slots themselves are absolute instants shown in the visitor's own zone. */}
                                 <p className="text-sm text-text-muted mb-4">
-                                    Times are shown in your time zone ({Intl.DateTimeFormat().resolvedOptions().timeZone}).
+                                    Times are shown in your time zone ({describeTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone)}).
                                 </p>
                                 <div className="flex flex-col gap-6 max-h-[28rem] lg:max-h-[36rem] overflow-y-auto pr-1">
                                     {/* fetchSlotPage() stops after a couple of fully booked windows, leaving the rest to the button. */}

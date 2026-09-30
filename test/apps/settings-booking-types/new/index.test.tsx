@@ -78,13 +78,20 @@ afterEach(() => {
     window.history.pushState(null, "", "/");
 });
 
+/** Chooses a zone in the Timezone list: opens it, searches for the zone and clicks the option that starts with `name`. */
+async function chooseZone(user: ReturnType<typeof userEvent.setup>, name: string, field: () => HTMLElement = () => screen.getByLabelText("Timezone")) {
+    await user.click(field());
+    await user.type(screen.getByRole("searchbox", { name: "Search time zones" }), name);
+    await user.click(screen.getByRole("option", { name: new RegExp(`^${name}`) }));
+}
+
 describe("NewBookingTypePage", () => {
     it("prefills host name and timezone from the mailbox", async () => {
         mockShell();
         render(<NewBookingTypePage userUid="u1" />);
 
         expect(await screen.findByLabelText("Host name shown to visitors")).toHaveValue("My Mail");
-        expect(screen.getByLabelText("Timezone")).toHaveValue("America/New_York");
+        expect(screen.getByLabelText("Timezone")).toHaveTextContent(/^New York, America \(GMT-0[45]:00\)/);
     });
 
     it("shows an error when the calendar folder can't be resolved", async () => {
@@ -235,9 +242,8 @@ describe("NewBookingTypePage", () => {
         await user.type(screen.getByLabelText("Description (optional)"), "Let's chat");
         expect(screen.getByLabelText("Description (optional)")).toHaveValue("Let's chat");
 
-        await user.clear(screen.getByLabelText("Timezone"));
-        await user.type(screen.getByLabelText("Timezone"), "UTC");
-        expect(screen.getByLabelText("Timezone")).toHaveValue("UTC");
+        await chooseZone(user, "UTC");
+        expect(screen.getByLabelText("Timezone")).toHaveTextContent("UTC (GMT+00:00)");
     });
 
     it("blocks submission with its own message when the calendar folder is still missing at submit time", async () => {
@@ -311,7 +317,7 @@ describe("NewBookingTypePage mailbox", () => {
         await screen.findByLabelText("Host name shown to visitors");
         expect(mailboxField()).toHaveValue("mb2");
         expect(hostName()).toHaveValue("Support Desk");
-        expect(timezone()).toHaveValue("Europe/London");
+        expect(timezone()).toHaveTextContent(/^London, Europe \(GMT\+0[01]:00\)/);
         await vi.waitFor(() => expect(foldersRequested(fetchMock)).toEqual(["mb2"]));
         await act(async () => undefined);
     });
@@ -357,16 +363,16 @@ describe("NewBookingTypePage mailbox", () => {
         render(<NewBookingTypePage userUid="u1" />);
         await screen.findByLabelText("Host name shown to visitors");
         expect(hostName()).toHaveValue("My Mail");
-        expect(timezone()).toHaveValue("America/New_York");
+        expect(timezone()).toHaveTextContent(/^New York, America \(GMT-0[45]:00\)/);
 
         await user.selectOptions(mailboxField(), "mb2");
         expect(hostName()).toHaveValue("Support Desk");
-        expect(timezone()).toHaveValue("Europe/London");
+        expect(timezone()).toHaveTextContent(/^London, Europe \(GMT\+0[01]:00\)/);
 
         // And back again: they are still the mailbox's own.
         await user.selectOptions(mailboxField(), "mb1");
         expect(hostName()).toHaveValue("My Mail");
-        expect(timezone()).toHaveValue("America/New_York");
+        expect(timezone()).toHaveTextContent(/^New York, America \(GMT-0[45]:00\)/);
     });
 
     it("keeps a host name the user typed, but still carries the timezone", async () => {
@@ -380,7 +386,7 @@ describe("NewBookingTypePage mailbox", () => {
         await user.selectOptions(mailboxField(), "mb2");
 
         expect(hostName()).toHaveValue("Jane from Sales");
-        expect(timezone()).toHaveValue("Europe/London");
+        expect(timezone()).toHaveTextContent(/^London, Europe \(GMT\+0[01]:00\)/);
     });
 
     it("keeps a timezone the user typed, but still carries the host name", async () => {
@@ -388,12 +394,11 @@ describe("NewBookingTypePage mailbox", () => {
         mockTwoMailboxes();
         render(<NewBookingTypePage userUid="u1" />);
         await screen.findByLabelText("Host name shown to visitors");
-        await user.clear(timezone());
-        await user.type(timezone(), "Asia/Tokyo");
+        await chooseZone(user, "Tokyo", timezone);
 
         await user.selectOptions(mailboxField(), "mb2");
 
-        expect(timezone()).toHaveValue("Asia/Tokyo");
+        expect(timezone()).toHaveTextContent("Tokyo, Asia (GMT+09:00)");
         expect(hostName()).toHaveValue("Support Desk");
     });
 

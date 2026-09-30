@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Jean-Philippe Steinmetz
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
-import React, { FormEvent, useEffect, useState } from "react";
+import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import { ApiRequestError } from "@rapidmx/web-client/lib/util/api.js";
 import { Folder, listFolders } from "@rapidmx/web-client/lib/mail/mailApi.js";
 import {
@@ -25,6 +25,8 @@ import MailboxSelect from "../shared/components/MailboxSelect.js";
 import Alert from "@rapidmx/web-client/lib/components/feedback/Alert.js";
 import Button from "@rapidmx/web-client/lib/components/buttons/Button.js";
 import FormField from "@rapidmx/web-client/lib/components/forms/FormField.js";
+import TimeZonePicker from "@rapidmx/web-client/lib/components/pickers/TimeZonePicker.js";
+import { timeZoneOptions } from "@rapidmx/web-client/lib/util/timeZone.js";
 import Modal from "@rapidmx/web-client/lib/components/overlays/Modal.js";
 
 const INPUT_CLASS =
@@ -50,6 +52,7 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
     const [hostDisplayName, setHostDisplayName] = useState("");
     const [meetingTypes, setMeetingTypes] = useState<BookingMeetingType[]>([]);
     const [timezone, setTimezone] = useState("");
+    const timeZones = useMemo(() => timeZoneOptions(timezone), [timezone]);
     const [availability, setAvailability] = useState<BookingAvailabilityWindow[]>([]);
     const [minimumNoticeMinutes, setMinimumNoticeMinutes] = useState(60);
     const [bookingWindowDays, setBookingWindowDays] = useState(30);
@@ -274,13 +277,7 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
                         />
                     </FormField>
                     <FormField label="Timezone" htmlFor="timezone">
-                        <input
-                            id="timezone"
-                            type="text"
-                            className={INPUT_CLASS}
-                            value={timezone}
-                            onChange={(e) => setTimezone(e.target.value)}
-                        />
+                        <TimeZonePicker id="timezone" className={INPUT_CLASS} value={timezone} zones={timeZones} onChange={setTimezone} />
                     </FormField>
 
                     <div className="mb-4">
