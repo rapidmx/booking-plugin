@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-30
+
+### Changed
+- Show time zones as the city, its region and the offset from UTC, and choose them from a searchable list, on the booking type pages and the booking page
+- Require a web client that has the fast time zone picker
+
 ## [0.10.2] - 2026-09-29
 
 ### Fixed
@@ -176,7 +182,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed the booking pages drawing the deployment logo a second time under the branding header, and pushing the branding footer off screen
 
-[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.10.2...HEAD
+[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/rapidmx/booking-plugin/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/rapidmx/booking-plugin/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/rapidmx/booking-plugin/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/rapidmx/booking-plugin/compare/v0.9.0...v0.10.0
