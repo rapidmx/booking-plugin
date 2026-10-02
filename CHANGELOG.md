@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-02
+
+### Changed
+- Update @rapidmx/web-client to 0.31.0
+- Change the picture and the banner of a booking profile through the camera badge menu, with the choice to upload a file, take a photo or remove it
+- Rotate a photo the way it was taken when it is chosen for a booking profile
+
 ## [0.11.0] - 2026-09-30
 
 ### Changed
@@ -182,7 +189,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed the booking pages drawing the deployment logo a second time under the branding header, and pushing the branding footer off screen
 
-[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/rapidmx/booking-plugin/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/rapidmx/booking-plugin/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/rapidmx/booking-plugin/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/rapidmx/booking-plugin/compare/v0.10.0...v0.10.1
