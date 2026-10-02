@@ -939,7 +939,7 @@ __metadata:
   dependencies:
     "@rapidmx/meet-plugin": "npm:^0.5.0"
     "@rapidmx/restapi": "npm:^0.25.1"
-    "@rapidmx/web-client": "npm:^0.25.1"
+    "@rapidmx/web-client": "npm:^0.31.0"
     "@rapidrest/core": "npm:^6.0.0"
     "@rapidrest/react": "npm:^2.1.0"
     "@rapidrest/service-core": "npm:^2.4.0"
@@ -986,7 +986,7 @@ __metadata:
     winston: "npm:^3.19.0"
   peerDependencies:
     "@rapidmx/restapi": ">=0.23.0 <1"
-    "@rapidmx/web-client": ">=0.25.1 <1"
+    "@rapidmx/web-client": ">=0.31.0 <1"
     "@rapidrest/core": 5.x
     "@rapidrest/react": ">=2.1.0 <3"
     "@rapidrest/service-core": 2.x
@@ -1053,9 +1053,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@rapidmx/web-client@npm:^0.25.1":
-  version: 0.25.1
-  resolution: "@rapidmx/web-client@npm:0.25.1"
+"@rapidmx/web-client@npm:^0.31.0":
+  version: 0.31.0
+  resolution: "@rapidmx/web-client@npm:0.31.0"
   dependencies:
     "@dnd-kit/core": "npm:^6.3.1"
     "@emoji-mart/data": "npm:^1.2.1"
@@ -1084,7 +1084,7 @@ __metadata:
     "@rapidrest/react": ">=2.1.0 <3"
     react: 19.x
     react-dom: 19.x
-  checksum: 10c0/e33614e06405e9a96cabaaa2e4e4e0064b2ab52523e0f0c74428821b8a4215c1076472b5b0706098f97df7d831b44bc4717b1b170583a7de5f1807f51a45e57f
+  checksum: 10c0/a80ab9e7a4f3189ab51886d52a232c1f2dba7ad39bb84effe2c960ae89a94dcdc53273f7ed7ffaaa1e16b35233fc0044e13cb07ddfdf298076ff018d88d611a3
   languageName: node
   linkType: hard
 

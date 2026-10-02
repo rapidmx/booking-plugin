@@ -23,7 +23,7 @@
     },
     "peerDependencies": {
         "@rapidmx/restapi": ">=0.23.0 <1",
-        "@rapidmx/web-client": ">=0.25.1 <1",
+        "@rapidmx/web-client": ">=0.31.0 <1",
         "@rapidrest/core": "5.x",
         "@rapidrest/react": ">=2.1.0 <3",
         "@rapidrest/service-core": "2.x",
@@ -39,7 +39,7 @@
     "devDependencies": {
         "@rapidmx/meet-plugin": "^0.5.0",
         "@rapidmx/restapi": "^0.25.1",
-        "@rapidmx/web-client": "^0.25.1",
+        "@rapidmx/web-client": "^0.31.0",
         "@rapidrest/core": "^6.0.0",
         "@rapidrest/react": "^2.1.0",
         "@rapidrest/service-core": "^2.4.0",
@@ -86,7 +86,7 @@
     },
     "resolutions": {
         "@rapidmx/restapi": "^0.23.0",
-        "@rapidmx/web-client": "^0.25.1"
+        "@rapidmx/web-client": "^0.31.0"
     },
     "packageManager": "yarn@4.5.3",
     "engines": {

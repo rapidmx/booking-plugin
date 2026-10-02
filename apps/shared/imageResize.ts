@@ -31,7 +31,13 @@ export const BANNER_TARGET: ImageTarget = { width: 1600, height: 400, type: "ima
 export async function resizeToCover(file: Blob, target: ImageTarget): Promise<Blob> {
     let bitmap: ImageBitmap;
     try {
-        bitmap = await createImageBitmap(file);
+        try {
+            // A phone stores a portrait photo sideways, with an EXIF orientation to turn it: a browser whose default is to ignore that must be asked to apply it.
+            bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+        } catch {
+            // Or one that does not know the option.
+            bitmap = await createImageBitmap(file);
+        }
     } catch {
         throw new Error("That file isn't an image this browser can read.");
     }

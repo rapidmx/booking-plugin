@@ -41,6 +41,17 @@ async function loaded() {
     await act(async () => undefined);
 }
 
+/** Opens the menu of the camera badge on an image's corner. */
+async function openMenu(user: ReturnType<typeof userEvent.setup>, image: "banner" | "avatar") {
+    await user.click(screen.getByRole("button", { name: `Change ${image}` }));
+}
+
+/** Removes an image the way a user does: from its badge's menu. */
+async function removeImage(user: ReturnType<typeof userEvent.setup>, image: "banner" | "avatar") {
+    await openMenu(user, image);
+    await user.click(screen.getByRole("menuitem", { name: "Remove photo" }));
+}
+
 beforeEach(() => {
     vi.mocked(resizeToCover).mockReset();
     vi.mocked(resizeToCover).mockResolvedValue(resized);
@@ -59,20 +70,25 @@ describe("BookingProfileEditor", () => {
             expect(fetchMock).toHaveBeenCalledWith(PROFILE_URL, expect.anything());
         });
 
-        it("previews the images at their saved versions, offering to change or remove them", async () => {
+        it("previews the images at their saved versions, each with a badge whose menu can remove it", async () => {
             mockProfile(undefined, { mailboxUid: "jane@example.com", avatarVersion: "av 1", bannerVersion: "bn1" });
             renderEditor();
 
             expect(await screen.findByAltText("Banner preview")).toHaveAttribute("src", "/api/mail/booking-profiles/jane@example.com/banner?v=bn1");
             expect(screen.getByAltText("Avatar preview")).toHaveAttribute("src", "/api/mail/booking-profiles/jane@example.com/avatar?v=av%201");
-            expect(screen.getByRole("button", { name: "Change banner" })).toBeInTheDocument();
-            expect(screen.getByRole("button", { name: "Remove banner" })).toBeInTheDocument();
-            expect(screen.getByRole("button", { name: "Change avatar" })).toBeInTheDocument();
-            expect(screen.getByRole("button", { name: "Remove avatar" })).toBeInTheDocument();
-            expect(screen.queryByRole("button", { name: /^Upload/ })).not.toBeInTheDocument();
+            const user = userEvent.setup();
+            // The badges sit on the banner's upper right and the avatar's lower right.
+            expect(screen.getByRole("button", { name: "Change banner" })).toHaveClass("absolute", "top-2", "right-2");
+            expect(screen.getByRole("button", { name: "Change avatar" })).toHaveClass("absolute", "bottom-0", "right-0");
+            await openMenu(user, "banner");
+            expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Upload file", "Take photo", "Remove photo"]);
+            await user.keyboard("{Escape}");
+            await openMenu(user, "avatar");
+            expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Upload file", "Take photo", "Remove photo"]);
+            expect(screen.queryByRole("button", { name: /^(Upload|Remove)/ })).not.toBeInTheDocument();
         });
 
-        it("offers to upload, with the mailbox's initial as the avatar, when nothing is set", async () => {
+        it("shows an empty banner area and the mailbox's initial as the avatar, with nothing to remove, when nothing is set", async () => {
             mockProfile();
             const { container } = renderEditor("jane host");
             await loaded();
@@ -80,9 +96,13 @@ describe("BookingProfileEditor", () => {
             expect(screen.queryByAltText("Banner preview")).not.toBeInTheDocument();
             expect(screen.queryByAltText("Avatar preview")).not.toBeInTheDocument();
             expect(container.querySelector("span[aria-hidden='true']")).toHaveTextContent("J");
-            expect(screen.getByRole("button", { name: "Upload banner" })).toBeInTheDocument();
-            expect(screen.getByRole("button", { name: "Upload avatar" })).toBeInTheDocument();
-            expect(screen.queryByRole("button", { name: /^Remove/ })).not.toBeInTheDocument();
+            expect(screen.getByText("No banner image")).toBeInTheDocument();
+            const user = userEvent.setup();
+            for (const image of ["banner", "avatar"] as const) {
+                await openMenu(user, image);
+                expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Upload file", "Take photo"]);
+                await user.keyboard("{Escape}");
+            }
         });
 
         it("previews only the banner when only a banner is set, and only the avatar when only an avatar is set", async () => {
@@ -90,16 +110,18 @@ describe("BookingProfileEditor", () => {
             const first = renderEditor();
             expect(await screen.findByAltText("Banner preview")).toBeInTheDocument();
             expect(screen.queryByAltText("Avatar preview")).not.toBeInTheDocument();
-            expect(screen.getByRole("button", { name: "Change banner" })).toBeInTheDocument();
-            expect(screen.getByRole("button", { name: "Upload avatar" })).toBeInTheDocument();
+            expect(screen.queryByText("No banner image")).not.toBeInTheDocument();
+            await openMenu(userEvent.setup(), "banner");
+            expect(screen.getByRole("menuitem", { name: "Remove photo" })).toBeInTheDocument();
             first.unmount();
 
             mockProfile(undefined, { mailboxUid: "jane@example.com", avatarVersion: "av1" });
             renderEditor();
             expect(await screen.findByAltText("Avatar preview")).toBeInTheDocument();
             expect(screen.queryByAltText("Banner preview")).not.toBeInTheDocument();
-            expect(screen.getByRole("button", { name: "Upload banner" })).toBeInTheDocument();
-            expect(screen.getByRole("button", { name: "Change avatar" })).toBeInTheDocument();
+            expect(screen.getByText("No banner image")).toBeInTheDocument();
+            await openMenu(userEvent.setup(), "avatar");
+            expect(screen.getByRole("menuitem", { name: "Remove photo" })).toBeInTheDocument();
         });
 
         it("uses a question mark as the avatar of a mailbox with no name", async () => {
@@ -114,7 +136,7 @@ describe("BookingProfileEditor", () => {
             renderEditor();
             expect(await screen.findByText("no access to that mailbox")).toBeInTheDocument();
             // The editor is still usable: the images are simply unset until it is loaded.
-            expect(screen.getByRole("button", { name: "Upload banner" })).toBeInTheDocument();
+            expect(screen.getByRole("button", { name: "Change banner" })).toBeEnabled();
         });
 
         it("shows a generic message when loading fails with a non-API error", async () => {
@@ -166,7 +188,7 @@ describe("BookingProfileEditor", () => {
     });
 
     describe("picking an image", () => {
-        it("opens the file picker of the matching input from each button", async () => {
+        it("opens the file picker of the matching input from each badge's Upload file row", async () => {
             mockProfile();
             const user = userEvent.setup();
             renderEditor();
@@ -176,20 +198,41 @@ describe("BookingProfileEditor", () => {
             screen.getByLabelText("Banner image file").addEventListener("click", bannerClicked);
             screen.getByLabelText("Avatar image file").addEventListener("click", avatarClicked);
 
-            await user.click(screen.getByRole("button", { name: "Upload banner" }));
+            await openMenu(user, "banner");
+            await user.click(screen.getByRole("menuitem", { name: "Upload file" }));
             expect(bannerClicked).toHaveBeenCalledTimes(1);
             expect(avatarClicked).not.toHaveBeenCalled();
 
-            await user.click(screen.getByRole("button", { name: "Upload avatar" }));
+            await openMenu(user, "avatar");
+            await user.click(screen.getByRole("menuitem", { name: "Upload file" }));
             expect(avatarClicked).toHaveBeenCalledTimes(1);
         });
 
-        it("only accepts images the server can store", async () => {
+        it("offers any image (a phone's picker gives its camera and library), which is re-encoded in the browser anyway", async () => {
             mockProfile();
             renderEditor();
             await loaded();
-            expect(screen.getByLabelText("Banner image file")).toHaveAttribute("accept", "image/png,image/jpeg,image/webp,image/gif");
-            expect(screen.getByLabelText("Avatar image file")).toHaveAttribute("accept", "image/png,image/jpeg,image/webp,image/gif");
+            expect(screen.getByLabelText("Banner image file")).toHaveAttribute("accept", "image/*");
+            expect(screen.getByLabelText("Avatar image file")).toHaveAttribute("accept", "image/*");
+            expect(screen.getByLabelText("Banner image file (camera)")).toHaveAttribute("capture", "user");
+        });
+
+        it("takes a photo from the phone's camera input like any picked file: resized, uploaded and previewed", async () => {
+            vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
+            const fetchMock = mockProfile((url, init) =>
+                url === `${PROFILE_URL}/avatar` && init?.method === "POST" ? jsonResponse(200, { mailboxUid: "jane@example.com", avatarVersion: "a9" }) : undefined,
+            );
+            const user = userEvent.setup();
+            renderEditor();
+            await loaded();
+            await openMenu(user, "avatar");
+            await user.click(screen.getByRole("menuitem", { name: "Take photo" }));
+
+            await user.upload(screen.getByLabelText("Avatar image file (camera)"), photo);
+
+            expect(await screen.findByAltText("Avatar preview")).toHaveAttribute("src", expect.stringContaining("v=a9"));
+            expect(resizeToCover).toHaveBeenCalledWith(photo, AVATAR_TARGET);
+            expect(fetchMock.mock.calls.some(([url, init]: any) => url === `${PROFILE_URL}/avatar` && init?.method === "POST")).toBe(true);
         });
 
         it("resizes a picked banner to the banner size, uploads it, and previews the new version", async () => {
@@ -211,8 +254,7 @@ describe("BookingProfileEditor", () => {
             // What is uploaded is the resized image, as the raw body, with its own type.
             expect((post?.[1] as RequestInit).body).toBe(resized);
             expect(new Headers((post?.[1] as RequestInit).headers).get("content-type")).toBe("image/jpeg");
-            expect(screen.getByRole("button", { name: "Change banner" })).toBeInTheDocument();
-            expect(screen.getByRole("button", { name: "Remove banner" })).toBeInTheDocument();
+            expect(screen.queryByText("No banner image")).not.toBeInTheDocument();
         });
 
         it("resizes a picked avatar to the avatar size and uploads it", async () => {
@@ -247,11 +289,11 @@ describe("BookingProfileEditor", () => {
             const input = screen.getByLabelText("Banner image file");
 
             await user.upload(input, photo);
-            await screen.findByRole("button", { name: "Remove banner" });
+            await screen.findByAltText("Banner preview");
             // The picker's value is cleared as soon as the file is read, so choosing that file again still fires a change.
             expect(input.value).toBe("");
-            await user.click(screen.getByRole("button", { name: "Remove banner" }));
-            await screen.findByRole("button", { name: "Upload banner" });
+            await removeImage(user, "banner");
+            await waitFor(() => expect(screen.queryByAltText("Banner preview")).not.toBeInTheDocument());
             await user.upload(input, photo);
 
             await waitFor(() => expect(screen.getByAltText("Banner preview")).toHaveAttribute("src", expect.stringContaining("v=b2")));
@@ -288,7 +330,7 @@ describe("BookingProfileEditor", () => {
 
             expect(resizeToCover).not.toHaveBeenCalled();
             expect(fetchMock.mock.calls.filter(([, init]: any) => init?.method === "POST")).toHaveLength(0);
-            expect(screen.getByRole("button", { name: "Upload banner" })).toBeEnabled();
+            expect(screen.getByRole("button", { name: "Change banner" })).toBeEnabled();
         });
     });
 
@@ -304,7 +346,7 @@ describe("BookingProfileEditor", () => {
 
             expect(await screen.findByText("That file isn't an image this browser can read.")).toBeInTheDocument();
             expect(fetchMock.mock.calls.filter(([, init]: any) => init?.method === "POST")).toHaveLength(0);
-            expect(screen.getByRole("button", { name: "Upload banner" })).toBeEnabled();
+            expect(screen.getByRole("button", { name: "Change banner" })).toBeEnabled();
         });
 
         it("shows the server's message when the upload is rejected, keeping what was there", async () => {
@@ -388,10 +430,10 @@ describe("BookingProfileEditor", () => {
             renderEditor();
             await screen.findByAltText("Banner preview");
 
-            await user.click(screen.getByRole("button", { name: "Remove banner" }));
+            await removeImage(user, "banner");
 
-            await screen.findByRole("button", { name: "Upload banner" });
-            expect(screen.queryByAltText("Banner preview")).not.toBeInTheDocument();
+            await waitFor(() => expect(screen.queryByAltText("Banner preview")).not.toBeInTheDocument());
+            expect(screen.getByText("No banner image")).toBeInTheDocument();
             // The other image is untouched.
             expect(screen.getByAltText("Avatar preview")).toBeInTheDocument();
             expect(fetchMock).toHaveBeenCalledWith(`${PROFILE_URL}/banner`, expect.objectContaining({ method: "DELETE" }));
@@ -407,10 +449,9 @@ describe("BookingProfileEditor", () => {
             const { container } = renderEditor();
             await screen.findByAltText("Avatar preview");
 
-            await user.click(screen.getByRole("button", { name: "Remove avatar" }));
+            await removeImage(user, "avatar");
 
-            await screen.findByRole("button", { name: "Upload avatar" });
-            expect(screen.queryByAltText("Avatar preview")).not.toBeInTheDocument();
+            await waitFor(() => expect(screen.queryByAltText("Avatar preview")).not.toBeInTheDocument());
             expect(container.querySelector("span[aria-hidden='true']")).toHaveTextContent("J");
             expect(fetchMock).toHaveBeenCalledWith(`${PROFILE_URL}/avatar`, expect.objectContaining({ method: "DELETE" }));
         });
@@ -425,11 +466,11 @@ describe("BookingProfileEditor", () => {
             renderEditor();
             await screen.findByAltText("Banner preview");
 
-            await user.click(screen.getByRole("button", { name: "Remove banner" }));
+            await removeImage(user, "banner");
 
             expect(await screen.findByText("could not delete")).toBeInTheDocument();
             expect(screen.getByAltText("Banner preview")).toBeInTheDocument();
-            expect(screen.getByRole("button", { name: "Remove banner" })).toBeEnabled();
+            expect(screen.getByRole("button", { name: "Change banner" })).toBeEnabled();
         });
 
         it("names the image in a generic message when removing fails with a non-API error", async () => {
@@ -444,7 +485,7 @@ describe("BookingProfileEditor", () => {
             renderEditor();
             await screen.findByAltText("Avatar preview");
 
-            await user.click(screen.getByRole("button", { name: "Remove avatar" }));
+            await removeImage(user, "avatar");
 
             expect(await screen.findByText("Could not remove the avatar.")).toBeInTheDocument();
         });
@@ -464,17 +505,17 @@ describe("BookingProfileEditor", () => {
             renderEditor();
             await screen.findByAltText("Banner preview");
 
-            await user.click(screen.getByRole("button", { name: "Remove banner" }));
+            await removeImage(user, "banner");
             await screen.findByText("could not delete");
-            await user.click(screen.getByRole("button", { name: "Remove banner" }));
+            await removeImage(user, "banner");
 
-            await screen.findByRole("button", { name: "Upload banner" });
+            await waitFor(() => expect(screen.queryByAltText("Banner preview")).not.toBeInTheDocument());
             expect(screen.queryByText("could not delete")).not.toBeInTheDocument();
         });
     });
 
     describe("while busy", () => {
-        it("disables every button, and spins the one at work, until an upload is done", async () => {
+        it("disables both badges, and spins over the image at work, until an upload is done", async () => {
             let finish: (response: Response) => void = () => undefined;
             mockProfile(
                 (url, init) =>
@@ -487,23 +528,22 @@ describe("BookingProfileEditor", () => {
 
             await user.upload(screen.getByLabelText("Banner image file"), photo);
 
-            const banner = await screen.findByRole("button", { name: "Upload banner" });
-            expect(banner).toBeDisabled();
-            expect(banner.querySelector(".animate-spin")).not.toBeNull();
+            const banner = screen.getByRole("button", { name: "Change banner" });
+            await waitFor(() => expect(banner).toBeDisabled());
             expect(screen.getByRole("button", { name: "Change avatar" })).toBeDisabled();
-            expect(screen.getByRole("button", { name: "Change avatar" }).querySelector(".animate-spin")).toBeNull();
-            expect(screen.getByRole("button", { name: "Remove avatar" })).toBeDisabled();
+            // One spinner, over the banner: it is not on the avatar.
+            const spinners = screen.getAllByRole("status", { name: "Saving" });
+            expect(spinners).toHaveLength(1);
+            expect(banner.parentElement).toContainElement(spinners[0]);
 
             await act(async () => finish(jsonResponse(200, { mailboxUid: "jane@example.com", avatarVersion: "a1", bannerVersion: "b1" })));
 
-            expect(await screen.findByRole("button", { name: "Change banner" })).toBeEnabled();
+            await waitFor(() => expect(banner).toBeEnabled());
             expect(screen.getByRole("button", { name: "Change avatar" })).toBeEnabled();
-            expect(screen.getByRole("button", { name: "Remove avatar" })).toBeEnabled();
-            expect(screen.getByRole("button", { name: "Remove banner" })).toBeEnabled();
-            expect(document.querySelector(".animate-spin")).toBeNull();
+            expect(screen.queryByRole("status", { name: "Saving" })).not.toBeInTheDocument();
         });
 
-        it("disables every button, and spins the one at work, until a removal is done", async () => {
+        it("disables both badges, and spins over the image at work, until a removal is done", async () => {
             let finish: (response: Response) => void = () => undefined;
             mockProfile(
                 (url, init) =>
@@ -514,17 +554,15 @@ describe("BookingProfileEditor", () => {
             renderEditor();
             await screen.findByAltText("Avatar preview");
 
-            await user.click(screen.getByRole("button", { name: "Remove avatar" }));
+            await removeImage(user, "avatar");
 
-            expect(screen.getByRole("button", { name: "Change avatar" }).querySelector(".animate-spin")).not.toBeNull();
+            expect(screen.getAllByRole("status", { name: "Saving" })).toHaveLength(1);
             expect(screen.getByRole("button", { name: "Change avatar" })).toBeDisabled();
-            expect(screen.getByRole("button", { name: "Remove avatar" })).toBeDisabled();
             expect(screen.getByRole("button", { name: "Change banner" })).toBeDisabled();
-            expect(screen.getByRole("button", { name: "Remove banner" })).toBeDisabled();
 
             await act(async () => finish(jsonResponse(200, { mailboxUid: "jane@example.com", bannerVersion: "b1" })));
 
-            expect(await screen.findByRole("button", { name: "Upload avatar" })).toBeEnabled();
+            await waitFor(() => expect(screen.getByRole("button", { name: "Change avatar" })).toBeEnabled());
             expect(screen.getByRole("button", { name: "Change banner" })).toBeEnabled();
         });
 
@@ -538,8 +576,8 @@ describe("BookingProfileEditor", () => {
             await user.upload(screen.getByLabelText("Banner image file"), photo);
             await screen.findByText("nope");
 
-            expect(screen.getByRole("button", { name: "Upload banner" })).toBeEnabled();
-            expect(screen.getByRole("button", { name: "Upload avatar" })).toBeEnabled();
+            expect(screen.getByRole("button", { name: "Change banner" })).toBeEnabled();
+            expect(screen.getByRole("button", { name: "Change avatar" })).toBeEnabled();
         });
     });
 });

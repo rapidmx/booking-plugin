@@ -58,10 +58,19 @@ describe("targets", () => {
 });
 
 describe("resizeToCover", () => {
-    it("decodes the file it is given", async () => {
+    it("decodes the file it is given, upright as its EXIF orientation says (a portrait phone photo is stored sideways)", async () => {
         const s = setup(2000, 2000);
         await resizeToCover(file, AVATAR_TARGET);
-        expect(s.createImageBitmap).toHaveBeenCalledWith(file);
+        expect(s.createImageBitmap).toHaveBeenCalledTimes(1);
+        expect(s.createImageBitmap).toHaveBeenCalledWith(file, { imageOrientation: "from-image" });
+    });
+
+    it("decodes it without the option in a browser that rejects it", async () => {
+        const s = setup(2000, 2000);
+        s.createImageBitmap.mockRejectedValueOnce(new TypeError("imageOrientation is not a valid value"));
+        await resizeToCover(file, AVATAR_TARGET);
+        expect(s.createImageBitmap).toHaveBeenCalledTimes(2);
+        expect(s.createImageBitmap).toHaveBeenLastCalledWith(file);
     });
 
     it("centre-crops a landscape source to a square target and scales it down", async () => {
@@ -183,7 +192,7 @@ describe("resizeToCover", () => {
 
     it("rejects with a friendly message when the browser can't decode the file", async () => {
         const s = setup(2000, 2000);
-        s.createImageBitmap.mockRejectedValueOnce(new DOMException("The source image could not be decoded.", "InvalidStateError"));
+        s.createImageBitmap.mockRejectedValue(new DOMException("The source image could not be decoded.", "InvalidStateError"));
 
         await expect(resizeToCover(file, AVATAR_TARGET)).rejects.toThrow("That file isn't an image this browser can read.");
         // Nothing was decoded, so nothing is drawn or released.
