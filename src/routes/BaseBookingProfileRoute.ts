@@ -18,7 +18,7 @@ import {
 import type { BlobStore, Mailbox } from "@rapidmx/restapi";
 import { BookingProfile } from "../models/types.js";
 import { stripTrustedRoles } from "../util/RouteAccessUtils.js";
-const { Inject, Logger } = ObjectDecorators;
+const { Init, Inject, Logger } = ObjectDecorators;
 const { Delete, Get, Param, Post, Query, Request, Response, User: AuthUser } = RouteDecorators;
 
 /** The image types an avatar or banner may be. Not any `image/*`: an `image/svg+xml` upload is a document that can carry
@@ -74,8 +74,8 @@ export abstract class BaseBookingProfileRoute<P extends BookingProfile, M extend
     // Automatically injected by ObjectFactory on instantiation
     private _objectFactory?: ObjectFactory;
 
-    private profileRepo?: RepoUtils<P>;
-    private mailboxRepo?: RepoUtils<M>;
+    protected profileRepo?: RepoUtils<P>;
+    protected mailboxRepo?: RepoUtils<M>;
 
     @Inject(ACLUtils)
     private aclUtils?: ACLUtils;
@@ -93,18 +93,16 @@ export abstract class BaseBookingProfileRoute<P extends BookingProfile, M extend
      * `@rapidmx/restapi`'s own equivalent fix. */
     private trustedRoles: string[] = ["admin"];
 
-    private async init(): Promise<void> {
-        if (!this.profileRepo) {
-            this.profileRepo = await this._objectFactory!.newInstance(RepoUtils, {
-                name: this.bookingProfileClass.name,
-                args: [this.bookingProfileClass],
-            });
+    @Init
+    protected async initialize(): Promise<void> {
+        if (!this._objectFactory) {
+            throw new Error("objectFactory is not set.");
         }
-        if (!this.mailboxRepo) {
-            this.mailboxRepo = await this._objectFactory!.newInstance(RepoUtils, {
-                name: this.mailboxClass.name,
-                args: [this.mailboxClass],
-            });
+        if (!this.profileRepo && this.bookingProfileClass) {
+            this.profileRepo = await this._objectFactory.newInstance(RepoUtils, { name: this.bookingProfileClass.name, args: [this.bookingProfileClass] });
+        }
+        if (!this.mailboxRepo && this.mailboxClass) {
+            this.mailboxRepo = await this._objectFactory.newInstance(RepoUtils, { name: this.mailboxClass.name, args: [this.mailboxClass] });
         }
     }
 
@@ -149,7 +147,6 @@ export abstract class BaseBookingProfileRoute<P extends BookingProfile, M extend
 
     @Get("/:mailboxUid")
     public async get(@Param("mailboxUid") rawMailboxUid: string, @AuthUser user?: JWTUser): Promise<BookingProfileView> {
-        await this.init();
         const mailboxUid: string = this.normalizeMailboxUid(rawMailboxUid);
         await this.requireMailboxPermission(mailboxUid, user, ACLAction.READ);
         return this.toView(mailboxUid, await this.profileRepo!.findOne(mailboxUid, { ignoreACL: true }));
@@ -206,7 +203,6 @@ export abstract class BaseBookingProfileRoute<P extends BookingProfile, M extend
      * `IMAGE_CONTENT_TYPES` - see there for why that is a fixed list rather than any `image/*`.
      */
     private async upload(rawMailboxUid: string, image: ProfileImage, req: HttpRequest, user: JWTUser | undefined): Promise<BookingProfileView> {
-        await this.init();
         const mailboxUid: string = this.normalizeMailboxUid(rawMailboxUid);
         await this.requireMailboxPermission(mailboxUid, user, ACLAction.UPDATE);
 
@@ -245,7 +241,6 @@ export abstract class BaseBookingProfileRoute<P extends BookingProfile, M extend
     }
 
     private async remove(rawMailboxUid: string, image: ProfileImage, user: JWTUser | undefined): Promise<BookingProfileView> {
-        await this.init();
         const mailboxUid: string = this.normalizeMailboxUid(rawMailboxUid);
         await this.requireMailboxPermission(mailboxUid, user, ACLAction.UPDATE);
 
@@ -269,7 +264,6 @@ export abstract class BaseBookingProfileRoute<P extends BookingProfile, M extend
      * image at that URL, so it is cached for good; one without it, or with a stale one, is revalidated every time.
      */
     private async serve(rawMailboxUid: string, image: ProfileImage, version: string | undefined, res: HttpResponse): Promise<void> {
-        await this.init();
         const mailboxUid: string = this.normalizeMailboxUid(rawMailboxUid);
         const profile: P | undefined = mailboxUid ? await this.profileRepo!.findOne(mailboxUid, { ignoreACL: true }) : undefined;
         const blobKey: string | undefined = profile ? (profile as any)[`${image}BlobKey`] : undefined;

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
 import * as crypto from "crypto";
-import { ApiError, type JWTUser } from "@rapidrest/core";
+import { ApiError, ObjectDecorators, type JWTUser } from "@rapidrest/core";
 import {
     ACLAction,
     ApiErrorMessages,
@@ -19,6 +19,7 @@ import { normalizeSlug, validateAvailability } from "../util/BookingUtils.js";
 import { Booking, BookingType } from "../models/types.js";
 import { stripTrustedRoles } from "../util/RouteAccessUtils.js";
 const { Param, Query, Request, User: AuthUser } = RouteDecorators;
+const { Init } = ObjectDecorators;
 
 /**
  * Extends `BaseScopedChildRoute` (scoped by `mailboxUid`, the `ContactList`/`MailFilterRule` shape) for
@@ -63,8 +64,23 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
      * booking type that has bookings to another mailbox (see `requireNoBookings()`). */
     protected abstract bookingClass: any;
 
-    private folderRepo?: RepoUtils<Folder>;
-    private bookingRepo?: RepoUtils<Booking>;
+    protected folderRepo?: RepoUtils<Folder>;
+    protected bookingRepo?: RepoUtils<Booking>;
+
+    /** Builds the repositories of the folder and booking classes once. Named uniquely along the inheritance chain: the
+     * ObjectFactory finds `@Init` methods by name, so a same-named method of a base route would be shadowed. */
+    @Init
+    protected async initBookingTypeRepos(): Promise<void> {
+        if (!this._objectFactory) {
+            throw new Error("objectFactory is not set.");
+        }
+        if (!this.folderRepo && this.folderClass) {
+            this.folderRepo = await this._objectFactory.newInstance(RepoUtils, { name: this.folderClass.name, args: [this.folderClass] });
+        }
+        if (!this.bookingRepo && this.bookingClass) {
+            this.bookingRepo = await this._objectFactory.newInstance(RepoUtils, { name: this.bookingClass.name, args: [this.bookingClass] });
+        }
+    }
 
     /** Normalizes `o.slug` in place, rejecting a `400` if nothing usable is left of it. */
     private normalizeSlugOf(o: Partial<T>): string {
@@ -95,10 +111,7 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
      * the caller was attempting, worded into the error message - see the class doc comment for why both `update()`
      * (moving mailboxes) and `delete()` share this same guard. */
     private async requireNoBookings(uid: string, action: "moved to another mailbox" | "deleted"): Promise<void> {
-        if (!this.bookingRepo) {
-            this.bookingRepo = await this._objectFactory!.newInstance(RepoUtils, { name: this.bookingClass.name, args: [this.bookingClass] });
-        }
-        if ((await this.bookingRepo.count({ bookingTypeUid: ModelUtils.literal(uid) } as any, { ignoreACL: true })) > 0) {
+        if ((await this.bookingRepo!.count({ bookingTypeUid: ModelUtils.literal(uid) } as any, { ignoreACL: true })) > 0) {
             throw new ApiError(
                 ApiErrors.IDENTIFIER_EXISTS,
                 409,
@@ -153,10 +166,7 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
         if (typeof calendarFolderUid !== "string" || !calendarFolderUid) {
             throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "calendarFolderUid is required.");
         }
-        if (!this.folderRepo) {
-            this.folderRepo = await this._objectFactory!.newInstance(RepoUtils, { name: this.folderClass.name, args: [this.folderClass] });
-        }
-        const folder: Folder | undefined = await this.folderRepo.findOne(calendarFolderUid, { ignoreACL: true });
+        const folder: Folder | undefined = await this.folderRepo!.findOne(calendarFolderUid, { ignoreACL: true });
         // Permission first, so a caller who can't read the folder learns nothing about which mailbox it belongs to.
         if (folder && !(await this.aclUtils!.hasPermission(stripTrustedRoles(user, this.trustedRoles), folder.uid, ACLAction.READ))) {
             throw new ApiError(ApiErrors.AUTH_PERMISSION_FAILURE, 403, ApiErrorMessages.AUTH_PERMISSION_FAILURE);

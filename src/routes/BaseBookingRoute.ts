@@ -60,7 +60,7 @@ import {
 import { Booking, BookingLocationOption, BookingLocationType, BookingMeetingType, BookingProfile, BookingStatus, BookingType } from "../models/types.js";
 import { stripTrustedRoles } from "../util/RouteAccessUtils.js";
 import { profileImageVersion } from "./BaseBookingProfileRoute.js";
-const { Config, Inject, Logger } = ObjectDecorators;
+const { Config, Init, Inject, Logger } = ObjectDecorators;
 const { Description, Summary } = DocDecorators;
 const { Transactional } = DatabaseDecorators;
 const { Get, Param, Post, Query, RateLimit, Request, Validate, User: AuthUser } = RouteDecorators;
@@ -222,7 +222,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+\.[^\s@]+$/;
  * mechanism `CalendarShareLink` uses: `resolveEffectiveUser()` is wired only into the read-shaped methods of
  * `BaseScopedChildRoute`, so there is no anonymous-write precedent to extend there. Instead this is a
  * standalone class in the shape of `BaseMailIngestRoute` - it is NOT a `CRUDRoute`/`BaseScopedChildRoute`
- * subclass, so no generic CRUD surface exists to be reached at all, it builds its own repos in `init()`, and
+ * subclass, so no generic CRUD surface exists to be reached at all, it builds its own repos in its `@Init` hook, and
  * every repo call passes `ignoreACL: true` because it performs its own authorization by `slug` and by
  * `manageToken`. Both `BookingType` and `Booking` keep an ordinary deny-all class ACL; `"anonymous"` is never
  * granted an action anywhere, for the reason documented on `BaseMailboxRoute`.
@@ -305,13 +305,13 @@ export abstract class BaseBookingRoute<
     // Automatically injected by ObjectFactory on instantiation
     private _objectFactory?: ObjectFactory;
 
-    private bookingTypeRepo?: RepoUtils<BT>;
-    private bookingRepo?: RepoUtils<B>;
-    private bookingProfileRepo?: RepoUtils<BookingProfile>;
-    private calendarEventRepo?: RepoUtils<CE>;
-    private folderRepo?: RepoUtils<F>;
-    private mailboxRepo?: RepoUtils<M>;
-    private messageRepo?: RepoUtils<any>;
+    protected bookingTypeRepo?: RepoUtils<BT>;
+    protected bookingRepo?: RepoUtils<B>;
+    protected bookingProfileRepo?: RepoUtils<BookingProfile>;
+    protected calendarEventRepo?: RepoUtils<CE>;
+    protected folderRepo?: RepoUtils<F>;
+    protected mailboxRepo?: RepoUtils<M>;
+    protected messageRepo?: RepoUtils<any>;
 
     @Inject("MailTransport")
     private mailTransport?: MailTransport;
@@ -357,48 +357,31 @@ export abstract class BaseBookingRoute<
         return (this.constructor as any).modelClass;
     }
 
-    private async init(): Promise<void> {
-        if (!this.bookingTypeRepo) {
-            this.bookingTypeRepo = await this._objectFactory!.newInstance(RepoUtils, {
-                name: this.bookingTypeClass.name,
-                args: [this.bookingTypeClass],
-            });
+    @Init
+    protected async initialize(): Promise<void> {
+        if (!this._objectFactory) {
+            throw new Error("objectFactory is not set.");
         }
-        if (!this.bookingRepo) {
-            this.bookingRepo = await this._objectFactory!.newInstance(RepoUtils, {
-                name: this.bookingClass.name,
-                args: [this.bookingClass],
-            });
+        if (!this.bookingTypeRepo && this.bookingTypeClass) {
+            this.bookingTypeRepo = await this._objectFactory.newInstance(RepoUtils, { name: this.bookingTypeClass.name, args: [this.bookingTypeClass] });
         }
-        if (!this.bookingProfileRepo) {
-            this.bookingProfileRepo = await this._objectFactory!.newInstance(RepoUtils, {
-                name: this.bookingProfileClass.name,
-                args: [this.bookingProfileClass],
-            });
+        if (!this.bookingRepo && this.bookingClass) {
+            this.bookingRepo = await this._objectFactory.newInstance(RepoUtils, { name: this.bookingClass.name, args: [this.bookingClass] });
         }
-        if (!this.calendarEventRepo) {
-            this.calendarEventRepo = await this._objectFactory!.newInstance(RepoUtils, {
-                name: this.calendarEventClass.name,
-                args: [this.calendarEventClass],
-            });
+        if (!this.bookingProfileRepo && this.bookingProfileClass) {
+            this.bookingProfileRepo = await this._objectFactory.newInstance(RepoUtils, { name: this.bookingProfileClass.name, args: [this.bookingProfileClass] });
         }
-        if (!this.folderRepo) {
-            this.folderRepo = await this._objectFactory!.newInstance(RepoUtils, {
-                name: this.folderClass.name,
-                args: [this.folderClass],
-            });
+        if (!this.calendarEventRepo && this.calendarEventClass) {
+            this.calendarEventRepo = await this._objectFactory.newInstance(RepoUtils, { name: this.calendarEventClass.name, args: [this.calendarEventClass] });
         }
-        if (!this.messageRepo) {
-            this.messageRepo = await this._objectFactory!.newInstance(RepoUtils, {
-                name: this.messageClass.name,
-                args: [this.messageClass],
-            });
+        if (!this.folderRepo && this.folderClass) {
+            this.folderRepo = await this._objectFactory.newInstance(RepoUtils, { name: this.folderClass.name, args: [this.folderClass] });
         }
-        if (!this.mailboxRepo) {
-            this.mailboxRepo = await this._objectFactory!.newInstance(RepoUtils, {
-                name: this.mailboxClass.name,
-                args: [this.mailboxClass],
-            });
+        if (!this.messageRepo && this.messageClass) {
+            this.messageRepo = await this._objectFactory.newInstance(RepoUtils, { name: this.messageClass.name, args: [this.messageClass] });
+        }
+        if (!this.mailboxRepo && this.mailboxClass) {
+            this.mailboxRepo = await this._objectFactory.newInstance(RepoUtils, { name: this.mailboxClass.name, args: [this.mailboxClass] });
         }
     }
 
@@ -1079,7 +1062,6 @@ export abstract class BaseBookingRoute<
     @Description("Returns the publicly visible details of an enabled booking type. Requires no authentication.")
     @Get("/types/:mailboxUid/:slug")
     public async publicBookingType(@Param("mailboxUid") mailboxUid: string, @Param("slug") slug: string): Promise<PublicBookingType> {
-        await this.init();
         return await this.toPublicBookingType(await this.requireBookingType(mailboxUid, slug));
     }
 
@@ -1097,7 +1079,6 @@ export abstract class BaseBookingRoute<
         @Query("to") to: string | undefined,
         @Request req?: HttpRequest,
     ): Promise<OccurrenceWindow[]> {
-        await this.init();
         const bookingType: BT = await this.requireBookingType(mailboxUid, slug);
         const meetingType: BookingMeetingType = this.requireMeetingType(bookingType, meetingTypeUid);
         // Every call walks the availability configuration and pages the host's calendar - per source IP and booking
@@ -1210,7 +1191,6 @@ export abstract class BaseBookingRoute<
     ): Promise<PublicBooking> {
         // `validateBook()` (run by `@Validate` before this handler) already guarantees `rawBody` is defined.
         const body: BookingRequestBody = rawBody!;
-        await this.init();
         // The booking type is resolved first, so the limiter only ever holds counters for real, enabled booking types
         // (keyed by the stored mailbox and slug) - not one per arbitrary link an anonymous caller makes up.
         const bookingType: BT = await this.requireBookingType(mailboxUid, slug);
@@ -1268,7 +1248,6 @@ export abstract class BaseBookingRoute<
     @Description("Returns the booker's own view of their booking. Requires no authentication beyond the token itself.")
     @Get("/manage/:token")
     public async manage(@Param("token") token: string): Promise<PublicBooking> {
-        await this.init();
         const booking: B = await this.requireBookingByToken(token);
         const bookingType: BT | undefined = await this.bookingTypeRepo!.findOne(booking.bookingTypeUid, { ignoreACL: true });
         if (!bookingType) {
@@ -1285,7 +1264,6 @@ export abstract class BaseBookingRoute<
     @RateLimit()
     @Post("/manage/:token/cancel")
     public async cancel(@Param("token") token: string): Promise<PublicBooking> {
-        await this.init();
         const booking: B = await this.requireBookingByToken(token);
         const bookingType: BT | undefined = await this.bookingTypeRepo!.findOne(booking.bookingTypeUid, { ignoreACL: true });
         if (!bookingType) {
@@ -1338,7 +1316,6 @@ export abstract class BaseBookingRoute<
     @RateLimit()
     @Post("/manage/:token/reschedule")
     public async reschedule(@Param("token") token: string, body: { start?: string } | undefined): Promise<PublicBooking> {
-        await this.init();
         const booking: B = await this.requireBookingByToken(token);
         if (booking.status === BookingStatus.CANCELLED) {
             throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "A cancelled booking cannot be rescheduled.");
@@ -1422,7 +1399,6 @@ export abstract class BaseBookingRoute<
     )
     @Get("/host")
     public async hostListBookings(@Query("bookingTypeUid") bookingTypeUid: string | undefined, @AuthUser user?: JWTUser): Promise<PublicBooking[]> {
-        await this.init();
         if (!bookingTypeUid) {
             throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "'bookingTypeUid' is required.");
         }
@@ -1450,7 +1426,6 @@ export abstract class BaseBookingRoute<
         body: { locationVideoUrl?: string } | undefined,
         @AuthUser user?: JWTUser,
     ): Promise<PublicBooking> {
-        await this.init();
         const booking: B | undefined = await this.bookingRepo!.findOne(uid, { ignoreACL: true });
         if (!booking) {
             throw new ApiError(ApiErrors.NOT_FOUND, 404, ApiErrorMessages.NOT_FOUND);
