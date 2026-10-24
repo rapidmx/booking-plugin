@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-24
+
+### Changed
+- Publish a prerelease version to npm under the next tag, which npm requires, and a release under latest
+- Build the repositories of the booking, profile and booking type routes once in an @Init hook rather than in an init() that every handler called
+- Build against @rapidmx/restapi ^0.34.0, @rapidmx/web-client ^0.36.0 and @rapidmx/meet-plugin ^0.17.0
+
 ## [0.12.0] - 2026-10-02
 
 ### Changed
@@ -189,7 +196,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed the booking pages drawing the deployment logo a second time under the branding header, and pushing the branding footer off screen
 
-[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/rapidmx/booking-plugin/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/rapidmx/booking-plugin/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/rapidmx/booking-plugin/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/rapidmx/booking-plugin/compare/v0.10.1...v0.10.2
