@@ -87,6 +87,16 @@ export function bookingEventDescription(details: BookingEventDetails): { descrip
     return { description: lines.map((line) => line.text).join("\n"), descriptionHtml: sanitizeEventDescriptionHtml(paragraphs.join("")) };
 }
 
+/**
+ * What a booking's calendar event says - its title, location and description - rebuilt from the booking. When zero-access encryption
+ * protects the host's calendar the event keeps these only sealed, so the invitation mailed to the booker is composed from this instead.
+ */
+export function bookingEventContent(
+    details: BookingEventDetails & Pick<Booking, "meetingTypeName">,
+): { title: string; location: string | undefined; description: string; descriptionHtml: string } {
+    return { title: `${details.meetingTypeName} with ${details.bookerName.trim()}`, location: bookingEventLocation(details), ...bookingEventDescription(details) };
+}
+
 /** `start` to `end` as a person reads it in `timezone` - "Friday, September 25, 2026, 12:30 PM - 1:00 PM (America/Chicago)". */
 export function formatBookingWhen(start: Date, end: Date, timezone: string): string {
     const day: string = new Intl.DateTimeFormat("en-US", { timeZone: timezone, dateStyle: "full" }).format(start);

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
 import { RouteDecorators } from "@rapidrest/service-core";
-import { CalendarEventSQL, FolderSQL, MailboxSQL, MessageSQL } from "@rapidmx/restapi/sql";
+import { CalendarEventSQL, EncryptionPolicySQL, FolderSQL, MailboxSQL, MessageSQL } from "@rapidmx/restapi/sql";
 import { BookingSQL } from "../../models/sql/BookingSQL.js";
 import { BookingProfileSQL } from "../../models/sql/BookingProfileSQL.js";
 import { BookingTypeSQL } from "../../models/sql/BookingTypeSQL.js";
@@ -23,6 +23,7 @@ export class BookingRouteSQL extends BaseBookingRoute<BookingTypeSQL, BookingSQL
     protected bookingClass: any = BookingSQL;
     protected bookingProfileClass: any = BookingProfileSQL;
     protected calendarEventClass: any = CalendarEventSQL;
+    protected encryptionPolicyClass: any = EncryptionPolicySQL;
     protected folderClass: any = FolderSQL;
     protected mailboxClass: any = MailboxSQL;
     protected messageClass: any = MessageSQL;

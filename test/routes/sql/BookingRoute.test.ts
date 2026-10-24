@@ -10,6 +10,7 @@
 // datasource supports them, where the standalone `MongoMemoryServer` the Mongo tests run against does not (it
 // logs a warning at connect time and degrades to running without one). So this file, not its twin, is what
 // actually exercises the transactional path.
+import { testZeroAccessKey } from "../../zeroAccessTestKey.js";
 import config from "../../config.sql.js";
 import { request } from "@rapidrest/service-core/test";
 import { Server, ObjectFactory, ConnectionManager, isSqlDataSource, RateLimiter, ACLAction, AccessControlListSQL } from "@rapidrest/service-core";
@@ -400,6 +401,25 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             const raw: string = mailTransport.sent[0].raw.toString();
             expect(raw).toContain(`/manage/${result.body.manageToken}`);
             expect(raw).toMatch(/^From: "?Ada Lovelace"? </m);
+        });
+
+        it("Seals the event in a host calendar zero-access encryption protects, and still mails the booker the real invitation.", async () => {
+            (mailbox as any).zeroAccessKeys = [await testZeroAccessKey()];
+            (mailbox as any).zeroAccessTypes = { calendar: true };
+            mailbox = await mailboxRepo.save(mailbox);
+            const bookingType = await createBookingType();
+
+            const result = await book(bookingType.slug, validBooking());
+
+            expect(result.status).toBe(200);
+            const [event]: any[] = await calendarEventRepo.find();
+            expect(event.title).toBe("Protected event");
+            expect(event.sealedFields.title).toEqual(expect.any(String));
+            expect(JSON.stringify(event)).not.toContain("Looking forward to it.");
+            expect(JSON.stringify(event)).not.toContain("meet.example.com");
+            const raw: string = mailTransport.sent[0].raw.toString();
+            expect(raw).toContain("SUMMARY:Intro Call with Grace Hopper");
+            expect(raw).toContain("LOCATION:https://meet.example.com/ada");
         });
 
         it("Puts the video call's URL in the event's location and describes the booking in its description.", async () => {

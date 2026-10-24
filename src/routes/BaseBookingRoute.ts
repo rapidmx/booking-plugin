@@ -40,6 +40,8 @@ import {
     convertLocalToUtc,
     deriveConversationId,
     findOrCreateWellKnownFolder,
+    hasSealedFields,
+    newZeroAccessRecordSealer,
     refreshFolderCounts,
     rateLimitKeyForIp,
     resolveClientIp,
@@ -47,10 +49,12 @@ import {
     type BlobStore,
     type MailTransport,
     type OccurrenceWindow,
+    type ZeroAccessRecordSealer,
 } from "@rapidmx/restapi";
 import { generateCandidateSlots, normalizeSlug, subtractBusy } from "../util/BookingUtils.js";
 import {
     BOOKING_REMINDER_MINUTES,
+    bookingEventContent,
     bookingEventDescription,
     bookingEventLocation,
     formatBookingWhen,
@@ -302,6 +306,11 @@ export abstract class BaseBookingRoute<
      */
     protected abstract importVideoconfBackend(): Promise<VideoconfBackendClasses | undefined>;
 
+    /** The backend's `EncryptionPolicy` model, for sealing a booking's event into a calendar zero-access encryption protects (restapi
+     * `specs/search.md` §3 *What It Covers*). Without it nothing is sealed. */
+    protected encryptionPolicyClass?: any;
+    private recordSealer?: ZeroAccessRecordSealer;
+
     // Automatically injected by ObjectFactory on instantiation
     private _objectFactory?: ObjectFactory;
 
@@ -383,6 +392,7 @@ export abstract class BaseBookingRoute<
         if (!this.mailboxRepo && this.mailboxClass) {
             this.mailboxRepo = await this._objectFactory.newInstance(RepoUtils, { name: this.mailboxClass.name, args: [this.mailboxClass] });
         }
+        this.recordSealer ??= await newZeroAccessRecordSealer(this._objectFactory, this.encryptionPolicyClass);
     }
 
     /** Looks up an enabled booking type by its mailbox and public slug. A disabled one is reported as a `404` rather
@@ -794,15 +804,12 @@ export abstract class BaseBookingRoute<
             bookerNotes: body.bookerNotes,
         };
 
-        const event: CE = await this.calendarEventRepo!.create(
-            new this.calendarEventClass({
+        const fields: Record<string, any> = {
                 folderUid: folder.uid,
                 mailboxUid: bookingType.mailboxUid,
-                title: `${meetingType.name} with ${body.bookerName!.trim()}`,
-                // Where and how the meeting happens, and who booked it with what notes, so the event on the host's own calendar
+                // The title, where and how the meeting happens, and who booked it with what notes, so the event on the host's own calendar
                 // (and the invitation the booker is mailed) carries them and not only the confirmation mail does.
-                location: bookingEventLocation(details),
-                ...bookingEventDescription(details),
+                ...bookingEventContent({ ...details, meetingTypeName: meetingType.name }),
                 reminderMinutesBeforeStart: BOOKING_REMINDER_MINUTES,
                 startDate: slot.start,
                 endDate: slot.end,
@@ -828,9 +835,13 @@ export abstract class BaseBookingRoute<
                 // every booking at once - mint a real one, matching `ScanQueueJob`'s own event creation.
                 icalUid: crypto.randomUUID(),
                 sequence: 0,
-            }),
-            { ignoreACL: true, acl: { uid: crypto.randomUUID(), parentUid: folder.uid, records: [] } },
-        );
+        };
+        // Sealed when zero-access encryption protects the host's calendar; the invitation is composed from the booking (`sendBookingMail()`).
+        await this.recordSealer?.sealWrite("calendar", mailbox, fields);
+        const event: CE = await this.calendarEventRepo!.create(new this.calendarEventClass(fields), {
+            ignoreACL: true,
+            acl: { uid: crypto.randomUUID(), parentUid: folder.uid, records: [] },
+        });
 
         return await this.bookingRepo!.create(
             new this.bookingClass({
@@ -909,7 +920,11 @@ export abstract class BaseBookingRoute<
                 text: lines.join("\n"),
                 icalEvent: {
                     method: cancelled ? "cancel" : "request",
-                    content: this.invitationIcs({ ...event, organizer: { ...event.organizer, displayName: hostName } }, cancelled),
+                    // A sealed event holds placeholders: the invitation says what the booking does.
+                    content: this.invitationIcs(
+                        { ...event, ...(hasSealedFields(event) ? bookingEventContent(booking) : {}), organizer: { ...event.organizer, displayName: hostName } },
+                        cancelled,
+                    ),
                 },
             })
                 .compile()
@@ -1454,22 +1469,20 @@ export abstract class BaseBookingRoute<
         // updated invitation.
         const event: CE | undefined = await this.calendarEventRepo!.findOne(booking.calendarEventUid, { ignoreACL: true, skipCache: true });
         if (event && event.status !== CalendarEventStatus.CANCELLED) {
-            const changed: CE = await this.calendarEventRepo!.update(
-                {
-                    uid: event.uid,
-                    version: (event as any).version,
-                    // `null` clears, for the same reason as above.
-                    location: bookingEventLocation(updated) ?? null,
-                    ...bookingEventDescription(updated),
-                    sequence: event.sequence + 1,
-                } as any,
-                event,
-                { ignoreACL: true },
-            );
+            const mailbox: M | undefined = await this.mailboxRepo!.findOne(booking.mailboxUid, { ignoreACL: true });
+            const patch: Record<string, any> = {
+                uid: event.uid,
+                version: (event as any).version,
+                // `null` clears, for the same reason as above.
+                location: bookingEventLocation(updated) ?? null,
+                ...bookingEventDescription(updated),
+                sequence: event.sequence + 1,
+            };
+            await this.recordSealer?.sealWrite("calendar", mailbox, patch, event);
+            const changed: CE = await this.calendarEventRepo!.update(patch as any, event, { ignoreACL: true });
             // The booker is mailed the updated invitation at once, like a reschedule, rather than left to MeetingSchedulingJob's
             // generic one (which has no manage link and no reminder). Without the mailbox there is nobody to send it as, and the
             // raised `sequence` is left for the job.
-            const mailbox: M | undefined = await this.mailboxRepo!.findOne(booking.mailboxUid, { ignoreACL: true });
             if (mailbox) {
                 await this.sendBookingMail(bookingType, updated, changed, mailbox, false);
                 await this.calendarEventRepo!.update(

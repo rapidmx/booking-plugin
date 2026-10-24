@@ -5,6 +5,7 @@
 // Exercises the ENTIRE anonymous booking flow with NO `Authorization` header on any request - these endpoints
 // are unauthenticated by design, and a test that quietly authenticated would prove nothing about the behavior
 // that actually matters. Same idiom as the anonymous share-token requests in CalendarEventRoute.test.ts.
+import { testZeroAccessKey } from "../../zeroAccessTestKey.js";
 import config from "../../config.js";
 import { request } from "@rapidrest/service-core/test";
 import { MongoConnection, MongoRepository, Server, ObjectFactory, ConnectionManager, RateLimiter, ACLAction } from "@rapidrest/service-core";
@@ -407,6 +408,25 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
             const raw: string = mailTransport.sent[0].raw.toString();
             expect(raw).toContain(`/manage/${result.body.manageToken}`);
             expect(raw).toMatch(/^From: "?Ada Lovelace"? </m);
+        });
+
+        it("Seals the event in a host calendar zero-access encryption protects, and still mails the booker the real invitation.", async () => {
+            (mailbox as any).zeroAccessKeys = [await testZeroAccessKey()];
+            (mailbox as any).zeroAccessTypes = { calendar: true };
+            mailbox = await mailboxRepo.save(mailbox);
+            const bookingType = await createBookingType();
+
+            const result = await book(bookingType.slug, validBooking());
+
+            expect(result.status).toBe(200);
+            const [event]: any[] = await calendarEventRepo.find({}).toArray();
+            expect(event.title).toBe("Protected event");
+            expect(event.sealedFields.title).toEqual(expect.any(String));
+            expect(JSON.stringify(event)).not.toContain("Looking forward to it.");
+            expect(JSON.stringify(event)).not.toContain("meet.example.com");
+            const raw: string = mailTransport.sent[0].raw.toString();
+            expect(raw).toContain("SUMMARY:Intro Call with Grace Hopper");
+            expect(raw).toContain("LOCATION:https://meet.example.com/ada");
         });
 
         it("Puts the video call's URL in the event's location and describes the booking in its description.", async () => {
