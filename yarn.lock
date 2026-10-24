@@ -704,6 +704,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@mediapipe/tasks-vision@npm:^1.0.1":
+  version: 1.1.1
+  resolution: "@mediapipe/tasks-vision@npm:1.1.1"
+  checksum: 10c0/373f3eae87de6d87f7060e8b50c7700c70ce025d167f6e85d0a7fa4042c97f267e53e568b4d1d9e0db79329803de57da20716d5be42a5bf2a49cd99e3d707155
+  languageName: node
+  linkType: hard
+
 "@mongodb-js/saslprep@npm:^1.4.11":
   version: 1.5.4
   resolution: "@mongodb-js/saslprep@npm:1.5.4"
@@ -937,9 +944,9 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@rapidmx/booking-plugin@workspace:."
   dependencies:
-    "@rapidmx/meet-plugin": "npm:^0.5.0"
-    "@rapidmx/restapi": "npm:^0.25.1"
-    "@rapidmx/web-client": "npm:^0.31.0"
+    "@rapidmx/meet-plugin": "npm:^0.17.0"
+    "@rapidmx/restapi": "npm:^0.34.0"
+    "@rapidmx/web-client": "npm:^0.36.0"
     "@rapidrest/core": "npm:^6.0.0"
     "@rapidrest/react": "npm:^2.1.0"
     "@rapidrest/service-core": "npm:^2.4.0"
@@ -998,19 +1005,20 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@rapidmx/meet-plugin@npm:^0.5.0":
-  version: 0.5.0
-  resolution: "@rapidmx/meet-plugin@npm:0.5.0"
+"@rapidmx/meet-plugin@npm:^0.17.0":
+  version: 0.17.0
+  resolution: "@rapidmx/meet-plugin@npm:0.17.0"
+  dependencies:
+    "@mediapipe/tasks-vision": "npm:^1.0.1"
   peerDependencies:
-    "@rapidmx/react-shared": ">=0.19.0 <1"
     "@rapidmx/restapi": ">=0.23.0 <1"
-    "@rapidmx/web-client": ">=0.17.0 <1"
+    "@rapidmx/web-client": ">=0.22.0 <1"
     "@rapidrest/core": 5.x
     "@rapidrest/react": ">=2.1.0 <3"
     "@rapidrest/service-core": 2.x
     react: 19.x
     react-dom: 19.x
-  checksum: 10c0/a2d8ab2e8dbaeae0988bdb7ea9c93233af9b5e69cf015307ec518da10997c5eacb83f2d2d3998213f722ae9820771b749fcd8ad89783c32f4bb98dcc3efa3d68
+  checksum: 10c0/f6f7dfffd982b031798d01c4c60973eaa14c2c212a1c3cbd045508d32db9c2424ff78750b07ad8238d1b3f7e01bceb3d6b09d39672facf4d456139b76bbe4ad6
   languageName: node
   linkType: hard
 
