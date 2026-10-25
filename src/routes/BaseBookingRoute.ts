@@ -1505,7 +1505,9 @@ export abstract class BaseBookingRoute<
     @Summary("Reschedules a booking.")
     @Description(
         "Moves the booking identified by the manage token to a new slot, which is validated against live " +
-            "availability exactly as a fresh booking would be. Requires no authentication beyond the token.",
+            "availability exactly as a fresh booking would be. A protected booking requires 'content', what the booker " +
+            "wrote as their manage page opened it (400 without it), since its new invitation is composed from it. " +
+            "Requires no authentication beyond the token.",
     )
     @RateLimit()
     @Post("/manage/:token/reschedule")
@@ -1518,6 +1520,13 @@ export abstract class BaseBookingRoute<
         const bookingType: BT | undefined = await this.bookingTypeRepo!.findOne(booking.bookingTypeUid, { ignoreACL: true });
         if (!bookingType || !bookingType.enabled) {
             throw new ApiError(ApiErrors.NOT_FOUND, 404, ApiErrorMessages.NOT_FOUND);
+        }
+        // A protected booking's new invitation and host notification are composed from what the booker's manage page sends with the
+        // request (never stored). Without it they would be rebuilt from the stored placeholders, and the booker's calendar would replace
+        // the event with one that has lost what they wrote - so nothing moves.
+        const content = bookingContentOf(body?.content);
+        if (booking.keyProtected && !content) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "Open your booking's link exactly as it was sent to you to reschedule it.");
         }
 
         const start: Date = this.requireDate(body?.start, "start");
@@ -1557,7 +1566,7 @@ export abstract class BaseBookingRoute<
                 { ignoreACL: true },
             );
             // A protected booking's mail is composed from what the booker's manage page sends with the request (never stored).
-            const shown: B = this.shownBooking(updated, bookingContentOf(body?.content));
+            const shown: B = this.shownBooking(updated, content);
             await this.sendBookingMail(bookingType, shown, moved, mailbox, false, isLinkKey(body?.linkKey) ? body.linkKey : undefined);
             await this.calendarEventRepo!.update(
                 { uid: moved.uid, version: (moved as any).version, inviteSequenceSent: moved.sequence } as any,

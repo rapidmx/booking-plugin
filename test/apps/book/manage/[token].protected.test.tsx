@@ -91,6 +91,10 @@ describe("ManageBookingPage for a protected booking", () => {
         mockPage((url) => (url === "/api/mail/bookings/manage/tok123" ? jsonResponse(200, protectedBooking) : undefined));
         const { unmount } = render(<ManageBookingPage params={{ token: "tok123" }} />);
         expect(await screen.findByText(/This link is missing its key/)).toBeInTheDocument();
+        // Without the key there is nothing to compose a new invitation from, so it can't be rescheduled - but it can still be cancelled.
+        expect(screen.getByText(/can.t be rescheduled/)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Reschedule" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "Cancel booking" })).toBeEnabled();
         unmount();
 
         protection.takeBookingKey.mockReturnValue(KEY);

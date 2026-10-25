@@ -12,7 +12,7 @@ import { decryptEnvelopedDataWithKeys } from "@rapidmx/web-client/lib/crypto/smi
 const { getUnlockedKeys } = vi.hoisted(() => ({ getUnlockedKeys: vi.fn() }));
 vi.mock("@rapidmx/web-client/lib/crypto/keySession.js", () => ({ getUnlockedKeys, subscribeKeySession: () => () => undefined }));
 
-const { bookingContent, hostLinkKey, openBookerCopy, openHostCopy, protectBooking, takeBookingKey, BOOKING_KEY_GRACE_MS } = await import(
+const { bookingContent, hostLinkKey, openBookerCopy, openedHostCopy, openHostCopy, protectBooking, takeBookingKey, BOOKING_KEY_GRACE_MS } = await import(
     "../../../apps/shared/bookingProtection.js"
 );
 
@@ -79,6 +79,26 @@ describe("bookingProtection", () => {
         expect(await hostLinkKey(listed)).toBeUndefined();
         getUnlockedKeys.mockReturnValue({ zeroAccessKeys: [{ ...host.unlocked, privateKey: (await hostKey()).unlocked.privateKey }] });
         expect(await hostLinkKey(listed)).toBeUndefined();
+    });
+
+    it("opens the host's copy for a change only when every field opens now, never handing back the placeholders", async () => {
+        const host = await hostKey();
+        const protection = await protectBooking("mb", host.certificate, host.fingerprint, { bookerName: "Ada", bookerNotes: "Notes" }, END);
+        const listed: any = { uid: "b2", mailboxUid: "mb", protected: true, bookerName: "ada@example.com", sealedFields: protection.sealedFields, keyWraps: protection.keyWraps };
+
+        // Locked: what the list shows is the placeholders, and a change gets nothing to send.
+        getUnlockedKeys.mockReturnValue(undefined);
+        expect(await openHostCopy(listed)).toEqual(listed);
+        expect(await openedHostCopy(listed)).toBeUndefined();
+        // Another key opens nothing either.
+        getUnlockedKeys.mockReturnValue({ zeroAccessKeys: [(await hostKey()).unlocked] });
+        expect(await openedHostCopy(listed)).toBeUndefined();
+
+        // Unlocked since: the same listed copy opens.
+        getUnlockedKeys.mockReturnValue({ zeroAccessKeys: [host.unlocked] });
+        expect(await openedHostCopy(listed)).toMatchObject({ bookerName: "Ada", bookerNotes: "Notes" });
+        // A booking with no sealed host copy has nothing opened.
+        expect(await openedHostCopy({ ...listed, sealedFields: undefined })).toBeUndefined();
     });
 
     it("picks only the booker-written fields a request sends for its mail", () => {

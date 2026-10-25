@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { jsonResponse, mockFetch, mockLocation, restoreLocation } from "../testUtils.js";
 const protection = vi.hoisted(() => ({
     openHostCopy: vi.fn(async (booking: any) => booking),
+    openedHostCopy: vi.fn(async (booking: any): Promise<any> => booking),
     hostLinkKey: vi.fn(async (): Promise<string | undefined> => undefined),
     bookingContent: vi.fn((booking: any) => ({ bookerName: booking.bookerName })),
 }));
@@ -643,6 +644,7 @@ describe("BookingTypeDetailPage", () => {
 
         it("shows a protected booking with the host's copy opened, and sends what it opened and the link key with a new video URL", async () => {
             protection.openHostCopy.mockImplementation(async (b: any) => ({ ...b, bookerName: "Grace Opened" }));
+            protection.openedHostCopy.mockImplementationOnce(async (b: any) => ({ ...b, bookerName: "Grace Opened" }));
             protection.hostLinkKey.mockResolvedValueOnce("k=the-booking-key-0123456789");
             const fetchMock = mockShell((url, init) => {
                 if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
@@ -679,6 +681,72 @@ describe("BookingTypeDetailPage", () => {
             await user.click(screen.getByRole("button", { name: "Save video URL" }));
             expect(await screen.findByText("Unlock your mailbox to change a protected booking's video link.")).toBeInTheDocument();
             expect(fetchMock).not.toHaveBeenCalledWith("/api/mail/bookings/host/b1/location", expect.anything());
+        });
+
+        it("opens a protected booking listed while the mailbox was locked again at save time, sending what the booker wrote, never the placeholders", async () => {
+            // Listed locked: the placeholders (the booker's address as their name). Unlocked since, without the page reloading.
+            protection.openedHostCopy.mockImplementationOnce(async (b: any) => ({ ...b, bookerName: "Grace Opened", bookerNotes: "Bring slides" }));
+            protection.hostLinkKey.mockResolvedValueOnce("k=the-booking-key-0123456789");
+            protection.bookingContent.mockImplementationOnce((b: any) => ({ bookerName: b.bookerName, bookerNotes: b.bookerNotes }));
+            const fetchMock = mockShell((url, init) => {
+                if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
+                if (url === "/api/mail/bookings/host?bookingTypeUid=bt1") return jsonResponse(200, [booking({ protected: true, bookerName: "grace@example.com" })]);
+                if (url === "/api/mail/bookings/host/b1/location" && init?.method === "POST") return jsonResponse(200, booking({ protected: true }));
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+            expect(await screen.findByText(/grace@example.com/)).toBeInTheDocument();
+            await user.type(screen.getByLabelText("Video URL (not set)"), "https://example.com/room");
+            await user.click(screen.getByRole("button", { name: "Save video URL" }));
+            await vi.waitFor(() =>
+                expect(fetchMock).toHaveBeenCalledWith(
+                    "/api/mail/bookings/host/b1/location",
+                    expect.objectContaining({
+                        body: JSON.stringify({
+                            locationVideoUrl: "https://example.com/room",
+                            content: { bookerName: "Grace Opened", bookerNotes: "Bring slides" },
+                            linkKey: "k=the-booking-key-0123456789",
+                        }),
+                    }),
+                ),
+            );
+            expect(protection.openedHostCopy).toHaveBeenCalledWith(expect.objectContaining({ uid: "b1", bookerName: "grace@example.com" }));
+        });
+
+        it("won't change a protected booking's video URL whose host copy doesn't open at save time, even with its link key", async () => {
+            protection.openedHostCopy.mockResolvedValueOnce(undefined);
+            protection.hostLinkKey.mockResolvedValueOnce("k=the-booking-key-0123456789");
+            const fetchMock = mockShell((url) => {
+                if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
+                if (url === "/api/mail/bookings/host?bookingTypeUid=bt1") return jsonResponse(200, [booking({ protected: true, bookerName: "grace@example.com" })]);
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+            await user.type(await screen.findByLabelText("Video URL (not set)"), "https://example.com/room");
+            await user.click(screen.getByRole("button", { name: "Save video URL" }));
+            expect(await screen.findByText("Unlock your mailbox to change a protected booking's video link.")).toBeInTheDocument();
+            expect(fetchMock).not.toHaveBeenCalledWith("/api/mail/bookings/host/b1/location", expect.anything());
+        });
+
+        it("sends the saved URL again when Save is clicked on the untouched field, rather than clearing it", async () => {
+            const fetchMock = mockShell((url, init) => {
+                if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
+                if (url === "/api/mail/bookings/host?bookingTypeUid=bt1") return jsonResponse(200, [booking({ locationVideoUrl: "https://old.example.com/room" })]);
+                if (url === "/api/mail/bookings/host/b1/location" && init?.method === "POST") return jsonResponse(200, booking({ locationVideoUrl: "https://old.example.com/room" }));
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+            expect(await screen.findByLabelText("Video URL")).toHaveValue("https://old.example.com/room");
+            await user.click(screen.getByRole("button", { name: "Save video URL" }));
+            await vi.waitFor(() =>
+                expect(fetchMock).toHaveBeenCalledWith(
+                    "/api/mail/bookings/host/b1/location",
+                    expect.objectContaining({ method: "POST", body: JSON.stringify({ locationVideoUrl: "https://old.example.com/room" }) }),
+                ),
+            );
         });
 
         it("clears a video booking's meeting URL when the field is emptied out before saving", async () => {

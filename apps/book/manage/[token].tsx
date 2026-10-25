@@ -185,7 +185,10 @@ function ManageBookingContent({ token }: { token: string }) {
                             </p>
                         )}
                         {keyMissing && (
-                            <Alert>This link is missing its key, so your booking&rsquo;s details can&rsquo;t be shown. Open the link exactly as it was sent to you.</Alert>
+                            <Alert>
+                                This link is missing its key, so your booking&rsquo;s details can&rsquo;t be shown, and it can&rsquo;t be rescheduled. Open the
+                                link exactly as it was sent to you.
+                            </Alert>
                         )}
 
                         {booking.status === BookingStatus.CANCELLED ? (
@@ -202,7 +205,8 @@ function ManageBookingContent({ token }: { token: string }) {
 
                                 {!rescheduling ? (
                                     <div className="flex gap-2">
-                                        <Button type="button" variant="secondary" className="!w-auto" onClick={handleStartReschedule}>
+                                        {/* Without the key there is nothing to compose its new invitation from - see `reschedule()`. */}
+                                        <Button type="button" variant="secondary" className="!w-auto" disabled={keyMissing} onClick={handleStartReschedule}>
                                             Reschedule
                                         </Button>
                                         <Button

@@ -557,3 +557,25 @@ Fixed (findings by review id):
 Test setup: `@rapidmx/meet-plugin` added to `vitest.config.ts`'s `ssr.noExternal`. Loaded natively, it imported a second
 service-core whose `ModelUtils.literal()` the inlined one doesn't recognize, so its lookups matched nothing (Mongo) or failed to bind
 (SQLite). Production has one copy; minting never noticed because it doesn't query.
+
+## 2026-10-25: Second review fixes
+
+Fixed (findings by review id):
+
+- **#141 Reschedule without the booker's plaintext.** `reschedule()` refuses a protected booking whose request carries no valid
+  `content` (400 "Open your booking's link exactly as it was sent to you to reschedule it."), before anything is written: no move, no
+  key expiry change, no mail. Otherwise the new iTIP REQUEST (same UID, higher SEQUENCE) was composed from the stored placeholders and
+  replaced the booker's event ("call you at undefined"). The manage page disables Reschedule while `keyMissing` and says so in the
+  missing-key alert. Cancel stays available without the key (its CANCEL still carries placeholder wording - left, a cancelled event is
+  removed anyway).
+- **#142 Save on an untouched video URL cleared it.** `handleSaveVideoUrl()` sends what the field shows
+  (`videoUrlDrafts[uid] ?? shown.locationVideoUrl`), so saving the pre-filled URL again reaches the server's `changed === false` path
+  (#27) and keeps a minted link keyed; only a field emptied out clears it. The bug predates zero-access.
+- **#146 Video link change from a list loaded while locked.** New `openedHostCopy()` (`apps/shared/bookingProtection.ts`) opens the host
+  copy again and returns it only when web-client's `isOpenedRecord()` says every sealed field opened. `handleSaveVideoUrl()` uses it at
+  save time for a protected booking and refuses ("Unlock your mailbox...") when it doesn't open, so the content sent is never the
+  placeholders even when the page listed the bookings before the mailbox was unlocked. The list itself still isn't re-opened on unlock
+  (no `subscribeKeySession` here) - only cosmetic now.
+
+Meet-plugin's same-day changes (kick eviction, nonce layout, waiting room) need nothing here; the node_modules copy was refreshed to
+build and test against them.

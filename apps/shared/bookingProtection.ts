@@ -12,7 +12,7 @@ import { fromBase64, toBase64 } from "@rapidmx/web-client/lib/crypto/encoding.js
 import { getUnlockedKeys } from "@rapidmx/web-client/lib/crypto/keySession.js";
 import { generateMeetingKey, importMeetingKey, meetingKeyFragment, readMeetingKeyFragment } from "@rapidmx/web-client/lib/crypto/meetingKeys.js";
 import { decryptEnvelopedDataWithKeys, encryptForRecipients } from "@rapidmx/web-client/lib/crypto/smime.js";
-import { openSealedRecord } from "@rapidmx/web-client/lib/zeroAccess/sealedRecords.js";
+import { isOpenedRecord, openSealedRecord } from "@rapidmx/web-client/lib/zeroAccess/sealedRecords.js";
 import type { PublicBooking } from "./bookingApi.js";
 
 /** The booker-written fields a protected booking seals. */
@@ -112,6 +112,15 @@ export async function openBookerCopy(booking: PublicBooking, pkcs8: Uint8Array):
 /** `booking` (as the host lists it) with the host's copy opened, while the host's mailbox is unlocked - else as it is. */
 export async function openHostCopy(booking: PublicBooking): Promise<PublicBooking> {
     return booking.protected && booking.sealedFields ? await openSealedRecord(booking as PublicBooking & { mailboxUid: string }) : booking;
+}
+
+/** `booking` (a protected one, as the host lists it) with every field of the host's copy opened right now, or `undefined` when they
+ * don't all open (the host's mailbox is locked, or it isn't its key). For a change whose mail and event are composed from what the
+ * booker wrote: a copy listed while the mailbox was locked still holds the server's placeholders (the booker's address as their
+ * name, nothing else), which must never be sent as what they wrote. */
+export async function openedHostCopy(booking: PublicBooking): Promise<PublicBooking | undefined> {
+    const opened = await openHostCopy(booking);
+    return isOpenedRecord(opened) ? opened : undefined;
 }
 
 /** `booking`'s link key, opened from the host's wrap while the host's mailbox is unlocked - for the mail a host change sends the booker. */

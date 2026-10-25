@@ -175,6 +175,26 @@ export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void
             expect(cancelled.status).toBe(200);
         });
 
+        it("Refuses to reschedule a protected booking without what the booker wrote, moving and mailing nothing", async () => {
+            const key = await ctx.protectHost();
+            const { result } = await bookProtected(key.fingerprint);
+            const [before] = await ctx.findBookings();
+            const eventsBefore = JSON.stringify(await ctx.findEvents());
+            ctx.clearSentMail();
+            for (const content of [undefined, {}, { bookerName: "" }, "Grace Hopper"]) {
+                const refused = await request(ctx.app())
+                    .post(`${ctx.baseUrl}/manage/${result.body.manageToken}/reschedule`)
+                    .send({ start: "2099-06-01T14:00:00.000Z", content, linkKey: LINK_KEY });
+                expect(refused.status, JSON.stringify(refused.body)).toBe(400);
+                expect(refused.body.message).toBe("Open your booking's link exactly as it was sent to you to reschedule it.");
+            }
+            const [after] = await ctx.findBookings();
+            expect(new Date(after.startDate).toISOString()).toBe(new Date(before.startDate).toISOString());
+            expect(new Date(after.keyExpiresAt).toISOString()).toBe(new Date(before.keyExpiresAt).toISOString());
+            expect(JSON.stringify(await ctx.findEvents())).toBe(eventsBefore);
+            expect(ctx.sentMail()).toEqual([]);
+        });
+
         it("Rebuilds the event and mail of a host's new video link from the plaintext the host's client sends", async () => {
             const key = await ctx.protectHost();
             const { result } = await bookProtected(key.fingerprint);
