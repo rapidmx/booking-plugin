@@ -14,9 +14,11 @@ export const LOCATION_TYPE_LABELS: Record<BookingLocationType, string> = {
     [BookingLocationType.OTHER]: "Other",
 };
 
-/** A one-line summary of a booking's location, shown on the confirmation panel and the manage page. */
+/** A one-line summary of a booking's location, shown on the confirmation panel and the manage page. `linkKey`: a protected booking's key,
+ * which a protected meeting's video link (`videoLinkKeyed`) needs after `#` to join. */
 export function locationSummary(
-    booking: Pick<PublicBooking, "locationType" | "locationLabel" | "bookerPhone" | "locationVideoUrl" | "bookerLocationInstructions">,
+    booking: Pick<PublicBooking, "locationType" | "locationLabel" | "bookerPhone" | "locationVideoUrl" | "bookerLocationInstructions" | "videoLinkKeyed">,
+    linkKey?: string,
 ): string {
     const label = booking.locationLabel ?? LOCATION_TYPE_LABELS[booking.locationType];
     switch (booking.locationType) {
@@ -24,7 +26,7 @@ export function locationSummary(
             return `${label}: we'll call you at ${booking.bookerPhone}.`;
         case BookingLocationType.VIDEO:
             return booking.locationVideoUrl
-                ? `${label}: ${booking.locationVideoUrl}`
+                ? `${label}: ${booking.locationVideoUrl}${booking.videoLinkKeyed && linkKey ? `#${linkKey}` : ""}`
                 : `${label}: the meeting link will be shared with you before the meeting.`;
         case BookingLocationType.OTHER:
         default:

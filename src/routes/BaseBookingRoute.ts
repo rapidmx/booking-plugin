@@ -98,6 +98,14 @@ const VIDEOCONF_PLUGIN_NAME = "@rapidmx/meet-plugin";
  */
 type CreateSingleInviteeVideoMeetingFn = typeof import("@rapidmx/meet-plugin").createSingleInviteeVideoMeeting;
 
+/** `@rapidmx/meet-plugin`'s companion integration function, moving a minted meeting's key expiry - type-only, like
+ * `CreateSingleInviteeVideoMeetingFn`. Missing from a meet-plugin older than this package expects, which then keeps the old expiry. */
+type ExtendSingleInviteeMeetingKeyFn = typeof import("@rapidmx/meet-plugin").extendSingleInviteeMeetingKey;
+
+/** How long after its slot a protected booking's key lasts - what the booking page's `protectBooking()` (`BOOKING_KEY_GRACE_MS`) gives a
+ * new booking, and what a reschedule gives the moved one. */
+const BOOKING_KEY_GRACE_MS = 60 * 60_000;
+
 /**
  * The concrete `VideoMeeting`/`VideoMeetingInvitee` model classes for one backend (Mongo or SQL) that
  * `createSingleInviteeVideoMeeting()` needs to build its own repos with - mirroring how `meetingClass`/
@@ -218,6 +226,9 @@ export interface PublicBooking {
     guestSealedFields?: Record<string, string>;
     meetingKeyCertificate?: string;
     keyExpiresAt?: Date;
+    /** To the booker only: `locationVideoUrl` is a protected meeting's link, which needs the booking's key after `#` - the key the
+     * booker's manage link carries. */
+    videoLinkKeyed?: true;
     /** To the host only. */
     sealedFields?: Record<string, string>;
     /** To the host only: the booking key sealed to the host's zero-access certificate. */
@@ -528,6 +539,7 @@ export abstract class BaseBookingRoute<
                       guestSealedFields: booking.guestSealedFields ?? undefined,
                       meetingKeyCertificate: booking.meetingKeyCertificate ?? undefined,
                       keyExpiresAt: booking.keyExpiresAt ?? undefined,
+                      videoLinkKeyed: booking.videoLinkKeyed ? true : undefined,
                   }
             : {};
         return {
@@ -810,6 +822,28 @@ export abstract class BaseBookingRoute<
         } catch (err: any) {
             this.logger?.warn(`BookingRoute: failed to mint a video meeting for mailbox ${mailboxUid}: ${err.message}`);
             return undefined;
+        }
+    }
+
+    /**
+     * Moves the key expiry of the protected video meeting minted for a booking (its join URL `joinUrl`) to `keyExpiresAt`, through
+     * `@rapidmx/meet-plugin`'s `extendSingleInviteeMeetingKey()` - so a rescheduled booking's video link keeps working to its new slot.
+     * Best effort exactly like `maybeCreateVideoMeetingJoinUrl()`: skipped when the plugin isn't active or is too old to have the
+     * function, and any failure is logged, never thrown - a reschedule must never fail because of the video integration.
+     */
+    private async maybeExtendVideoMeetingKey(mailboxUid: string, joinUrl: string, keyExpiresAt: Date): Promise<void> {
+        if (!PluginRegistry.isActive(VIDEOCONF_PLUGIN_NAME)) {
+            return;
+        }
+        try {
+            const backend: VideoconfBackendClasses | undefined = await this.importVideoconfBackend();
+            const { extendSingleInviteeMeetingKey }: { extendSingleInviteeMeetingKey?: ExtendSingleInviteeMeetingKeyFn } = await import(VIDEOCONF_PLUGIN_NAME);
+            if (!backend || !extendSingleInviteeMeetingKey) {
+                return;
+            }
+            await extendSingleInviteeMeetingKey(this._objectFactory!, backend.meetingClass, backend.inviteeClass, mailboxUid, joinUrl, keyExpiresAt);
+        } catch (err: any) {
+            this.logger?.warn(`BookingRoute: failed to move the key expiry of the video meeting of mailbox ${mailboxUid}: ${err?.message ?? err}`);
         }
     }
 
@@ -1398,7 +1432,8 @@ export abstract class BaseBookingRoute<
                 { ignoreACL: true },
             );
         }
-        await this.fileHostNotification(bookingType, booking, mailbox);
+        // `shown`: a notification filed sealed carries what the booker wrote, and `fileHostNotification()` redacts one that isn't.
+        await this.fileHostNotification(bookingType, shown, mailbox);
 
         return await this.toPublicBooking(booking, bookingType, true);
     }
@@ -1503,11 +1538,17 @@ export abstract class BaseBookingRoute<
             // Booking first, under its optimistic lock - see `cancel()`: a racing cancel or reschedule makes this a `409`
             // before the event is moved.
             const previous = { start: booking.startDate, end: booking.endDate };
+            // A protected booking's key (and its minted video meeting's) lasts to the new slot's end plus the grace, never already past.
+            const keyExpiresAt: Date | undefined =
+                booking.keyProtected && !booking.keyDiscardedAt ? new Date(Math.max(slot.end.getTime() + BOOKING_KEY_GRACE_MS, Date.now())) : undefined;
             const updated: B = await this.bookingRepo!.update(
-                { uid: booking.uid, version: (booking as any).version, startDate: slot.start, endDate: slot.end } as any,
+                { uid: booking.uid, version: (booking as any).version, startDate: slot.start, endDate: slot.end, ...(keyExpiresAt && { keyExpiresAt }) } as any,
                 booking,
                 { ignoreACL: true },
             );
+            if (keyExpiresAt && booking.videoLinkKeyed && booking.locationVideoUrl) {
+                await this.maybeExtendVideoMeetingKey(booking.mailboxUid, booking.locationVideoUrl, keyExpiresAt);
+            }
             // Bumping `sequence` past `inviteSequenceSent` is what marks this revision as needing to go out;
             // it is re-stamped below once the updated invite has actually been mailed.
             const moved: CE = await this.calendarEventRepo!.update(
@@ -1603,16 +1644,22 @@ export abstract class BaseBookingRoute<
         if (!bookingType) {
             throw new ApiError(ApiErrors.NOT_FOUND, 404, ApiErrorMessages.NOT_FOUND);
         }
+        // A protected booking's event and mail are composed from what the host's client sends with the request (never stored). Without it
+        // they would be rebuilt from the stored placeholders, and the sealed description would lose what the booker wrote.
+        const content = bookingContentOf(body?.content);
+        if (booking.keyProtected && !content) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "Unlock your mailbox to change a protected booking's video link.");
+        }
+        const changed: boolean = (videoUrl ?? null) !== (booking.locationVideoUrl ?? null);
         // `null`, not `undefined`, to clear a previously-set URL - an undefined value is dropped from the
         // generated SQL `UPDATE`, leaving the column stale (same reasoning as `BaseBookingProfileRoute.remove()`).
         const updated: B = await this.bookingRepo!.update(
-            // The host's own link isn't a protected meeting's: it works without the booking key.
-            { uid: booking.uid, version: (booking as any).version, locationVideoUrl: videoUrl ?? null, videoLinkKeyed: null } as any,
+            // The host's own link isn't a protected meeting's: it works without the booking key. The same link saved again still is one.
+            { uid: booking.uid, version: (booking as any).version, locationVideoUrl: videoUrl ?? null, ...(changed && { videoLinkKeyed: null }) } as any,
             booking,
             { ignoreACL: true },
         );
-        // A protected booking's event and mail are composed from what the host's client sends with the request (never stored).
-        const shown: B = this.shownBooking(updated, bookingContentOf(body?.content));
+        const shown: B = this.shownBooking(updated, content);
 
         // The event on the calendar names the link too (its location and description), so it follows, and the booker is sent the
         // updated invitation.
@@ -1628,15 +1675,15 @@ export abstract class BaseBookingRoute<
                 sequence: event.sequence + 1,
             };
             await this.recordSealer?.sealWrite("calendar", mailbox, patch, event);
-            const changed: CE = await this.calendarEventRepo!.update(patch as any, event, { ignoreACL: true });
+            const rewritten: CE = await this.calendarEventRepo!.update(patch as any, event, { ignoreACL: true });
             // The booker is mailed the updated invitation at once, like a reschedule, rather than left to MeetingSchedulingJob's
             // generic one (which has no manage link and no reminder). Without the mailbox there is nobody to send it as, and the
             // raised `sequence` is left for the job.
             if (mailbox) {
-                await this.sendBookingMail(bookingType, shown, changed, mailbox, false, isLinkKey(body?.linkKey) ? body.linkKey : undefined);
+                await this.sendBookingMail(bookingType, shown, rewritten, mailbox, false, isLinkKey(body?.linkKey) ? body.linkKey : undefined);
                 await this.calendarEventRepo!.update(
-                    { uid: changed.uid, version: (changed as any).version, inviteSequenceSent: changed.sequence } as any,
-                    changed,
+                    { uid: rewritten.uid, version: (rewritten as any).version, inviteSequenceSent: rewritten.sequence } as any,
+                    rewritten,
                     { ignoreACL: true },
                 );
             }

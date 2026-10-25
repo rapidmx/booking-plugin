@@ -298,6 +298,8 @@ export interface PublicBooking {
     guestSealedFields?: Record<string, string>;
     meetingKeyCertificate?: string;
     keyExpiresAt?: string;
+    /** `locationVideoUrl` is a protected meeting's link: it works only with the booking's key after `#` (booker only). */
+    videoLinkKeyed?: true;
     /** The host's copy, opened with the host's zero-access key (`/host` only). */
     sealedFields?: Record<string, string>;
     keyWraps?: { mailboxUid: string; recipientFingerprint: string; kind: "meeting-key"; cms: string }[];

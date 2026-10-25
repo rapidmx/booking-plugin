@@ -75,6 +75,18 @@ describe("ManageBookingPage for a protected booking", () => {
         expect(JSON.parse((cancel?.[1] as RequestInit).body as string)).toEqual({ content: { bookerName: "Bob", bookerPhone: "+1 555 0100" }, linkKey: KEY.linkKey });
     });
 
+    it("shows a protected meeting's video link with the key the manage link carries", async () => {
+        protection.takeBookingKey.mockReturnValue(KEY);
+        protection.openBookerCopy.mockResolvedValue({ bookerName: "Bob" });
+        mockPage((url) =>
+            url === "/api/mail/bookings/manage/tok123"
+                ? jsonResponse(200, { ...protectedBooking, locationType: "video", locationVideoUrl: "https://mail.example.com/meet/tok", videoLinkKeyed: true })
+                : undefined,
+        );
+        render(<ManageBookingPage params={{ token: "tok123" }} />);
+        expect(await screen.findByText(`Video call: https://mail.example.com/meet/tok#${KEY.linkKey}`)).toBeInTheDocument();
+    });
+
     it("says the link is missing its key when it carries none, or one that doesn't open it", async () => {
         mockPage((url) => (url === "/api/mail/bookings/manage/tok123" ? jsonResponse(200, protectedBooking) : undefined));
         const { unmount } = render(<ManageBookingPage params={{ token: "tok123" }} />);

@@ -77,6 +77,8 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
     const [bookError, setBookError] = useState<string | null>(null);
     const [confirmed, setConfirmed] = useState(false);
     const [confirmedBooking, setConfirmedBooking] = useState<PublicBooking | null>(null);
+    /** A protected booking's key, which its manage link and a protected meeting's video link carry after `#`. */
+    const [confirmedLinkKey, setConfirmedLinkKey] = useState<string | undefined>(undefined);
     const [manageUrl, setManageUrl] = useState<string | null>(null);
 
     const selectedMeetingType: PublicMeetingType | undefined = bookingType?.meetingTypes.find((mt) => mt.uid === selectedMeetingTypeUid);
@@ -207,6 +209,7 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
             // A protected booking's manage link carries its key after `#` - this page is the only place it exists besides the mail.
             setManageUrl(result.manageToken ? `${bookingManageUrl(result.manageToken)}${protection ? `#${protection.linkKey}` : ""}` : null);
             setConfirmedBooking(result);
+            setConfirmedLinkKey(protection?.linkKey);
             setConfirmed(true);
         } catch (err) {
             setBookError(err instanceof ApiRequestError ? err.message : "Could not book this slot.");
@@ -276,7 +279,7 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
                                 {confirmedBooking.meetingTypeName} with {bookingType.hostDisplayName} on{" "}
                                 {new Date(selectedSlot.start).toLocaleString()}.
                             </p>
-                            <p className="text-sm text-text mb-4">{locationSummary(confirmedBooking)}</p>
+                            <p className="text-sm text-text mb-4">{locationSummary(confirmedBooking, confirmedLinkKey)}</p>
                             {manageUrl && (
                                 <>
                                     <p className="text-sm text-text-muted mb-1">Save this link to cancel or reschedule later:</p>

@@ -1547,10 +1547,13 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
         setKeyExpiresAt: async (uid: string, at: Date) => {
             await bookingRepo.updateOne({ uid } as any, { $set: { keyExpiresAt: at } } as any);
         },
-        runExpiry: async () => {
+        runExpiry: async (batchSize?: number) => {
             const job: any = await objectFactory.newInstance(BookingKeyExpiryJobMongo, { name: "booking-expiry-test" });
+            job.batchSize = batchSize ?? 200;
             await job.run();
         },
+        route: () => objectFactory.getInstance("routes.BookingRoute"),
+        findVideoMeetings: async () => await videoMeetingRepo.find({}).toArray(),
     });
 
     bookingSecuritySuite({

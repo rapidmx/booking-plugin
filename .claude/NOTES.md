@@ -529,3 +529,31 @@ Standing process rule, applies to every rapidmx/rapidrest repo: push pending com
   - `BookingKeyExpiryJob` (`./mongo`/`./sql`, every 5 minutes) drops the guest copy, certificate and wraps.
   - The video meeting is minted protected via meet-plugin `createSingleInviteeVideoMeeting(..., protection)`, with the same key and a sealed `meetingTitle`.
 - Client: `apps/shared/bookingProtection.ts` provides `protectBooking`, `takeBookingKey`, `openBookerCopy`, `openHostCopy` (web-client `openSealedRecord`), `hostLinkKey` and `bookingContent`. Used by the booking form, the manage page (it shows a missing-key notice) and the host list.
+
+## 2026-10-24: Review fixes (cross-repo adversarial review)
+
+Fixed (findings by review id):
+
+- **#20 Reschedule kept the old key expiry.** `reschedule()` moves a protected booking's `keyExpiresAt` (key not yet discarded) to the new
+  slot's end plus `BOOKING_KEY_GRACE_MS` (1 h, the booking page's grace), never to a time already past, under the same optimistic lock.
+  For a minted protected video meeting (`videoLinkKeyed`) it then calls meet-plugin's new `extendSingleInviteeMeetingKey()` through the
+  same dynamic import as minting (`maybeExtendVideoMeetingKey()`): best effort, skipped when the plugin is off, too old to have it, or
+  its backend won't load, and any failure (e.g. a slot past the meeting key's five-year bound) is logged. A booking whose key was already
+  discarded is rescheduled without bringing it back. Not done: the booking key's certificate keeps its original notAfter (nothing checks
+  it).
+- **#25 Expiry job starvation.** `BookingKeyExpiryJob` sorts by `keyExpiresAt, uid` ascending and stops at the first unexpired booking
+  (`batchSize`, default 200, settable for tests), like meet-plugin's `MeetingKeyExpiryJob`.
+- **#27 Host video link rebuilt from placeholders.** `setBookingLocationVideoUrl()` refuses a protected booking without `content` (400
+  "Unlock your mailbox to change a protected booking's video link.") instead of re-sealing the event description from the stored
+  placeholders, and clears `videoLinkKeyed` only when the URL actually changes (re-saving the minted link keeps its `#k=` in later mail).
+  The host page shows that message itself, without sending, when it can't unwrap the link key. Consequence: once the booking key has
+  expired (wraps gone) the host can't change that booking's link any more - it is over by then.
+- **#28 New-booking host notification from placeholders.** `book()` files it from `shown` (the request's plaintext);
+  `fileHostNotification()` still redacts one that isn't filed sealed.
+- **#29 Pages showing the keyed video link without its key.** `PublicBooking.videoLinkKeyed` (booker audience only), and
+  `locationSummary(booking, linkKey?)` appends `#<linkKey>` to a keyed link; the confirmation page passes the key it just made, the manage
+  page the one its link carries.
+
+Test setup: `@rapidmx/meet-plugin` added to `vitest.config.ts`'s `ssr.noExternal`. Loaded natively, it imported a second
+service-core whose `ModelUtils.literal()` the inlined one doesn't recognize, so its lookups matched nothing (Mongo) or failed to bind
+(SQLite). Production has one copy; minting never noticed because it doesn't query.

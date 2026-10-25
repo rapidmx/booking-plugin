@@ -24,6 +24,13 @@ describe("locationSummary() Tests", () => {
         ).toBe("Video call: https://meet.example.com/ada");
     });
 
+    it("Adds the booking's key to a protected meeting's link, and only to one.", () => {
+        const keyed = { locationType: BookingLocationType.VIDEO, locationVideoUrl: "https://meet.example.com/meet/tok", videoLinkKeyed: true } as any;
+        expect(locationSummary(keyed, "k=the-key")).toBe("Video call: https://meet.example.com/meet/tok#k=the-key");
+        expect(locationSummary(keyed)).toBe("Video call: https://meet.example.com/meet/tok");
+        expect(locationSummary({ ...keyed, videoLinkKeyed: undefined }, "k=the-key")).toBe("Video call: https://meet.example.com/meet/tok");
+    });
+
     it("Summarizes a video booking with no meeting link yet.", () => {
         expect(locationSummary({ locationType: BookingLocationType.VIDEO } as any)).toBe(
             "Video call: the meeting link will be shared with you before the meeting.",

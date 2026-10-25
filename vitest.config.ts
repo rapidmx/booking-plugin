@@ -19,11 +19,14 @@ export default defineConfig({
         dedupe: ["react", "react-dom", "@rapidrest/core", "@rapidrest/service-core", "typeorm", "mongodb", "reflect-metadata"],
     },
     ssr: {
+        // `@rapidmx/meet-plugin` too: loaded natively it would import its own, second service-core, whose query literals the
+        // inlined one (that the test servers run) doesn't recognize - its integration functions' lookups would then match nothing.
         noExternal: [
             "@rapidrest/service-core",
             "@rapidrest/core",
             "@rapidmx/restapi",
             "@rapidmx/web-client",
+            "@rapidmx/meet-plugin",
         ],
     },
     plugins: [

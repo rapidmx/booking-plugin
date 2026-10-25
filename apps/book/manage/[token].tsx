@@ -195,7 +195,7 @@ function ManageBookingContent({ token }: { token: string }) {
                                 <p className="text-lg">
                                     <strong>{new Date(booking.startDate).toLocaleString()}</strong>
                                 </p>
-                                <p className="text-sm text-text-muted">{locationSummary(booking)}</p>
+                                <p className="text-sm text-text-muted">{locationSummary(booking, linkKey?.linkKey)}</p>
                                 {booking.status === BookingStatus.PENDING && (
                                     <p className="text-xs text-text-muted">Awaiting the host&rsquo;s confirmation.</p>
                                 )}

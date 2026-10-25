@@ -666,6 +666,21 @@ describe("BookingTypeDetailPage", () => {
             protection.openHostCopy.mockImplementation(async (b: any) => b);
         });
 
+        it("won't change a protected booking's video URL without the key of an unlocked mailbox, and says so", async () => {
+            protection.hostLinkKey.mockResolvedValueOnce(undefined);
+            const fetchMock = mockShell((url) => {
+                if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());
+                if (url === "/api/mail/bookings/host?bookingTypeUid=bt1") return jsonResponse(200, [booking({ protected: true, bookerName: "grace@example.com" })]);
+                return undefined;
+            });
+            const user = userEvent.setup();
+            render(<BookingTypeDetailPage userUid="u1" params={{ uid: "bt1" }} />);
+            await user.type(await screen.findByLabelText("Video URL (not set)"), "https://example.com/room");
+            await user.click(screen.getByRole("button", { name: "Save video URL" }));
+            expect(await screen.findByText("Unlock your mailbox to change a protected booking's video link.")).toBeInTheDocument();
+            expect(fetchMock).not.toHaveBeenCalledWith("/api/mail/bookings/host/b1/location", expect.anything());
+        });
+
         it("clears a video booking's meeting URL when the field is emptied out before saving", async () => {
             const fetchMock = mockShell((url, init) => {
                 if (url === "/api/mail/booking-types/bt1") return jsonResponse(200, bookingType());

@@ -5,6 +5,7 @@
 // Protected bookings (meet-plugin `specs/meeting_privacy.md` §6.2), identical on both backends - run by
 // `test/routes/{mongo,sql}/BookingRoute.test.ts`.
 import { request } from "@rapidrest/service-core/test";
+import { PluginRegistry } from "@rapidmx/restapi";
 import { simpleParser } from "mailparser";
 import { bookingProtection, LINK_KEY, sealed } from "../bookingProtectionFixture.js";
 
@@ -24,7 +25,11 @@ export interface BookingProtectionSuiteContext {
     sentMail: () => { raw: Buffer; envelopeTo: string[] }[];
     clearSentMail: () => void;
     setKeyExpiresAt: (uid: string, at: Date) => Promise<void>;
-    runExpiry: () => Promise<void>;
+    /** Runs `BookingKeyExpiryJob` once, looking at `batchSize` bookings at most when given. */
+    runExpiry: (batchSize?: number) => Promise<void>;
+    /** The booking route instance. */
+    route: () => any;
+    findVideoMeetings: () => Promise<any[]>;
 }
 
 export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void {
@@ -186,6 +191,144 @@ export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void
             const [updated] = await ctx.findBookings();
             expect(updated.videoLinkKeyed ?? null).toBeNull();
             expect(JSON.stringify(await ctx.findEvents())).not.toContain("Host view");
+        });
+
+        it("Files a sealed host notification of a new booking with what the booker wrote", async () => {
+            const key = await ctx.protectHost({ calendar: true, mail: true });
+            const sealRaw = vi.spyOn(ctx.route().zeroAccessWriter, "sealRaw");
+            try {
+                await bookProtected(key.fingerprint);
+                expect(sealRaw).toHaveBeenCalledTimes(1);
+                const raw = await decoded((sealRaw.mock.calls[0] as any[])[1]);
+                expect(raw).toContain("Grace Hopper");
+                expect(raw).toContain("Looking forward to it.");
+                expect(raw).not.toContain("end-to-end encrypted");
+            } finally {
+                sealRaw.mockRestore();
+            }
+        });
+
+        it("Moves a rescheduled protected booking's key expiry to the new slot's end plus the grace hour, so expiry leaves it until then", async () => {
+            const key = await ctx.protectHost();
+            const { result } = await bookProtected(key.fingerprint);
+            const moved = await request(ctx.app())
+                .post(`${ctx.baseUrl}/manage/${result.body.manageToken}/reschedule`)
+                .send({ start: "2099-06-03T13:00:00.000Z", content: { bookerName: "Grace Hopper" }, linkKey: LINK_KEY });
+            expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+            const [booking] = await ctx.findBookings();
+            expect(new Date(booking.keyExpiresAt).toISOString()).toBe("2099-06-03T15:00:00.000Z");
+            await ctx.runExpiry();
+            expect((await ctx.findBookings())[0].guestSealedFields).toBeTruthy();
+
+            // A key already discarded isn't brought back.
+            await ctx.setKeyExpiresAt(booking.uid, new Date(Date.now() - 1000));
+            await ctx.runExpiry();
+            const again = await request(ctx.app())
+                .post(`${ctx.baseUrl}/manage/${result.body.manageToken}/reschedule`)
+                .send({ start: "2099-06-04T13:00:00.000Z", content: { bookerName: "Grace Hopper" } });
+            expect(again.status, JSON.stringify(again.body)).toBe(200);
+            expect(new Date((await ctx.findBookings())[0].keyExpiresAt).valueOf()).toBeLessThan(Date.now());
+        });
+
+        describe("with a protected video meeting minted for the booking", () => {
+            const VIDEOCONF_PLUGIN_NAME = "@rapidmx/meet-plugin";
+            /** A whole-day UTC slot `days` from now, at noon - near enough for the meeting key's five-year bound. */
+            const slotIn = (days: number) => {
+                const day = new Date();
+                const start = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate() + days, 12));
+                return { start: start.toISOString(), end: new Date(start.getTime() + 3_600_000).toISOString() };
+            };
+            const bookVideo = async () => {
+                PluginRegistry.setLoaded([{ name: VIDEOCONF_PLUGIN_NAME, version: "0.1.0" }]);
+                const key = await ctx.protectHost();
+                const bookingType = await ctx.createBookingType({
+                    timezone: "UTC",
+                    availability: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({ dayOfWeek, startMinute: 0, endMinute: 1440 })),
+                    meetingTypes: [{ uid: "mt-default", name: "Intro Call", durationMinutes: 60, locationOptions: [{ uid: "lo-default", type: "video" }] }],
+                });
+                const slot = slotIn(2);
+                const result = await book(bookingType.slug, { ...ctx.validBooking(slot.start), protection: bookingProtection(ctx.mailboxUid(), key.fingerprint, slot.end) });
+                expect(result.status, JSON.stringify(result.body)).toBe(200);
+                return { result, slot };
+            };
+            const reschedule = (token: string, start: string) =>
+                request(ctx.app()).post(`${ctx.baseUrl}/manage/${token}/reschedule`).send({ start, content: { bookerName: "Grace Hopper" }, linkKey: LINK_KEY });
+            const meetingExpiry = async () => new Date((await ctx.findVideoMeetings())[0].keyExpiresAt).toISOString();
+
+            afterEach(() => {
+                PluginRegistry.setLoaded([]);
+                vi.restoreAllMocks();
+            });
+
+            it("Tells the booker the video link needs the key, on the confirmation and the manage page", async () => {
+                const { result } = await bookVideo();
+                expect(result.body).toMatchObject({ protected: true, videoLinkKeyed: true, locationVideoUrl: expect.stringMatching(/\/meet\/[A-Za-z0-9_-]{43}$/) });
+                const managed = await request(ctx.app()).get(`${ctx.baseUrl}/manage/${result.body.manageToken}`);
+                expect(managed.body.videoLinkKeyed).toBe(true);
+                const [booking] = await ctx.findBookings();
+                const listed = await host().get(`${ctx.baseUrl}/host?bookingTypeUid=${booking.bookingTypeUid}`);
+                expect(listed.body[0].videoLinkKeyed).toBeUndefined();
+            });
+
+            it("Moves the meeting's key expiry with the booking's when it is rescheduled", async () => {
+                const { result, slot } = await bookVideo();
+                expect(await meetingExpiry()).toBe(new Date(Date.parse(slot.end) + 3_600_000).toISOString());
+
+                const later = slotIn(5);
+                const moved = await reschedule(result.body.manageToken, later.start);
+                expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+                const expected = new Date(Date.parse(later.end) + 3_600_000).toISOString();
+                expect(new Date((await ctx.findBookings())[0].keyExpiresAt).toISOString()).toBe(expected);
+                expect(await meetingExpiry()).toBe(expected);
+
+                // Best effort: not with the plugin off, nor without its backend, and a failure is logged, never answered.
+                PluginRegistry.setLoaded([]);
+                expect((await reschedule(result.body.manageToken, slotIn(6).start)).status).toBe(200);
+                PluginRegistry.setLoaded([{ name: VIDEOCONF_PLUGIN_NAME, version: "0.1.0" }]);
+                vi.spyOn(ctx.route(), "importVideoconfBackend").mockResolvedValueOnce(undefined);
+                expect((await reschedule(result.body.manageToken, slotIn(7).start)).status).toBe(200);
+                const warn = vi.spyOn(ctx.route().logger, "warn");
+                // Past the meeting key's five-year bound, which the meeting plugin refuses.
+                expect((await reschedule(result.body.manageToken, "2099-06-01T13:00:00.000Z")).status).toBe(200);
+                expect(warn).toHaveBeenCalledWith(expect.stringContaining("failed to move the key expiry of the video meeting"));
+                expect(await meetingExpiry()).toBe(expected);
+            });
+
+            it("Keeps the link keyed when the host saves it again unchanged, and refuses a change it can't compose from what the booker wrote", async () => {
+                const { result } = await bookVideo();
+                const [booking] = await ctx.findBookings();
+                const url = `${ctx.baseUrl}/host/${booking.uid}/location`;
+
+                const refused = await host().post(url).send({ locationVideoUrl: "https://video.example/new" });
+                expect(refused.status).toBe(400);
+                expect(refused.body.message).toBe("Unlock your mailbox to change a protected booking's video link.");
+                const [untouched] = await ctx.findBookings();
+                expect(untouched.locationVideoUrl).toBe(result.body.locationVideoUrl);
+
+                const resaved = await host().post(url).send({ locationVideoUrl: result.body.locationVideoUrl, content: { bookerName: "Grace Hopper" }, linkKey: LINK_KEY });
+                expect(resaved.status, JSON.stringify(resaved.body)).toBe(200);
+                expect((await ctx.findBookings())[0].videoLinkKeyed).toBe(true);
+            });
+        });
+
+        it("Reaches an expired booking behind a whole batch of bookings further ahead", async () => {
+            const key = await ctx.protectHost();
+            const ahead = [];
+            for (const day of ["02", "03", "04"]) {
+                const end = `2099-06-${day}T14:00:00.000Z`;
+                ahead.push(await bookProtected(key.fingerprint, { start: `2099-06-${day}T13:00:00.000Z`, protection: bookingProtection(ctx.mailboxUid(), key.fingerprint, end) }));
+            }
+            const { result } = await bookProtected(key.fingerprint);
+            const expired = (await ctx.findBookings()).find((booking) => booking.uid === result.body.uid);
+            await ctx.setKeyExpiresAt(expired.uid, new Date(Date.now() - 1000));
+
+            await ctx.runExpiry(2);
+
+            const bookings = await ctx.findBookings();
+            expect(bookings.find((booking) => booking.uid === expired.uid).keyDiscardedAt).toBeTruthy();
+            for (const { result: other } of ahead) {
+                expect(bookings.find((booking) => booking.uid === other.body.uid).guestSealedFields).toBeTruthy();
+            }
         });
 
         it("Discards the booker's copy and the key at expiry, keeping the host's copy", async () => {

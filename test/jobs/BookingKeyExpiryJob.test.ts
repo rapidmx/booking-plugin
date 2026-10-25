@@ -27,4 +27,16 @@ describe("BookingKeyExpiryJob (isolated)", () => {
         expect(job.bookingRepo.update).toHaveBeenCalledTimes(1);
         expect(job.logger.warn).toHaveBeenCalledWith(expect.stringContaining("couldn't discard the key of booking b1 yet: version"));
     });
+
+    it("takes the soonest expiry first and stops at the first booking that hasn't expired", async () => {
+        const job: any = new BookingKeyExpiryJobMongo();
+        const past = new Date(Date.now() - 1000);
+        job.bookingRepo = {
+            find: vi.fn().mockResolvedValue([{ uid: "b1", keyExpiresAt: past }, { uid: "b2", keyExpiresAt: new Date(Date.now() + 60_000) }, { uid: "b3", keyExpiresAt: past }]),
+            update: vi.fn().mockResolvedValue({}),
+        };
+        await job.run();
+        expect(job.bookingRepo.find).toHaveBeenCalledWith(expect.objectContaining({ sort: { keyExpiresAt: "ASC", uid: "ASC" }, limit: 200 }), expect.objectContaining({ limit: 200 }));
+        expect(job.bookingRepo.update.mock.calls.map(([patch]: any[]) => patch.uid)).toEqual(["b1"]);
+    });
 });

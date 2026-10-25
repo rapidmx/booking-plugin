@@ -118,11 +118,16 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
             const shown = bookings.find((b) => b.uid === bookingUid);
             // A protected booking's mail to the booker is composed from what this page opened, with the booker's link key.
             const linkKey = shown?.protected ? await hostLinkKey(shown) : undefined;
+            if (shown?.protected && !linkKey) {
+                // Its event and mail are rebuilt from what the booker wrote, which only this mailbox's unlocked key opens.
+                setBookingsError("Unlock your mailbox to change a protected booking's video link.");
+                return;
+            }
             const updated = await openHostCopy(
                 await setBookingLocationVideoUrl(
                     bookingUid,
                     videoUrlDrafts[bookingUid]?.trim() || undefined,
-                    shown?.protected && linkKey ? { content: bookingContent(shown), linkKey } : undefined,
+                    shown?.protected ? { content: bookingContent(shown), linkKey } : undefined,
                 ),
             );
             setBookings((current) => current.map((b) => (b.uid === bookingUid ? updated : b)));

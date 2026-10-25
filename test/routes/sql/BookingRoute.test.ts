@@ -1540,10 +1540,13 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         setKeyExpiresAt: async (uid: string, at: Date) => {
             await bookingRepo.update({ uid }, { keyExpiresAt: at });
         },
-        runExpiry: async () => {
+        runExpiry: async (batchSize?: number) => {
             const job: any = await objectFactory.newInstance(BookingKeyExpiryJobSQL, { name: "booking-expiry-test" });
+            job.batchSize = batchSize ?? 200;
             await job.run();
         },
+        route: () => objectFactory.getInstance("routes.BookingRoute"),
+        findVideoMeetings: async () => await videoMeetingRepo.find(),
     });
 
     bookingSecuritySuite({
