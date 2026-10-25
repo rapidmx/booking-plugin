@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
 import { RouteDecorators } from "@rapidrest/service-core";
-import { CalendarEventMongo, EncryptionPolicyMongo, FolderMongo, MailboxMongo, MessageMongo } from "@rapidmx/restapi/mongo";
+import { CalendarEventMongo, EncryptionPolicyMongo, FolderMongo, MailboxMongo, MessageMongo , ZeroAccessIndexEntryMongo } from "@rapidmx/restapi/mongo";
 import { BookingMongo } from "../../models/mongo/BookingMongo.js";
 import { BookingProfileMongo } from "../../models/mongo/BookingProfileMongo.js";
 import { BookingTypeMongo } from "../../models/mongo/BookingTypeMongo.js";
@@ -24,6 +24,7 @@ export class BookingRouteMongo extends BaseBookingRoute<BookingTypeMongo, Bookin
     protected bookingProfileClass: any = BookingProfileMongo;
     protected calendarEventClass: any = CalendarEventMongo;
     protected encryptionPolicyClass: any = EncryptionPolicyMongo;
+    protected zeroAccessIndexEntryClass: any = ZeroAccessIndexEntryMongo;
     protected folderClass: any = FolderMongo;
     protected mailboxClass: any = MailboxMongo;
     protected messageClass: any = MessageMongo;

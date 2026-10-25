@@ -42,6 +42,7 @@ import {
     findOrCreateWellKnownFolder,
     hasSealedFields,
     newZeroAccessRecordSealer,
+    newZeroAccessWriter,
     refreshFolderCounts,
     rateLimitKeyForIp,
     resolveClientIp,
@@ -50,6 +51,8 @@ import {
     type MailTransport,
     type OccurrenceWindow,
     type ZeroAccessRecordSealer,
+    type ZeroAccessSealedFields,
+    type ZeroAccessWriter,
 } from "@rapidmx/restapi";
 import { generateCandidateSlots, normalizeSlug, subtractBusy } from "../util/BookingUtils.js";
 import {
@@ -310,6 +313,10 @@ export abstract class BaseBookingRoute<
      * `specs/search.md` §3 *What It Covers*). Without it nothing is sealed. */
     protected encryptionPolicyClass?: any;
     private recordSealer?: ZeroAccessRecordSealer;
+    /** The backend's `ZeroAccessIndexEntry` model: with `encryptionPolicyClass`, a host notification is filed sealed like delivered mail
+     * when zero-access covers the host's mail (restapi `specs/search.md` §3, *Every Write, Not Just Delivery*). */
+    protected zeroAccessIndexEntryClass?: any;
+    private zeroAccessWriter?: ZeroAccessWriter;
 
     // Automatically injected by ObjectFactory on instantiation
     private _objectFactory?: ObjectFactory;
@@ -393,6 +400,7 @@ export abstract class BaseBookingRoute<
             this.mailboxRepo = await this._objectFactory.newInstance(RepoUtils, { name: this.mailboxClass.name, args: [this.mailboxClass] });
         }
         this.recordSealer ??= await newZeroAccessRecordSealer(this._objectFactory, this.encryptionPolicyClass);
+        this.zeroAccessWriter ??= await newZeroAccessWriter(this._objectFactory, this.encryptionPolicyClass, this.zeroAccessIndexEntryClass);
     }
 
     /** Looks up an enabled booking type by its mailbox and public slug. A disabled one is reported as a `404` rather
@@ -963,8 +971,9 @@ export abstract class BaseBookingRoute<
         previous?: { start: Date; end: Date },
     ): Promise<void> {
         const uid: string = crypto.randomUUID();
-        const bodyBlobKey: string = `booking-notifications/${uid}`;
+        let bodyBlobKey: string = `booking-notifications/${uid}`;
         let stored: boolean = false;
+        let sealed: ZeroAccessSealedFields | undefined;
         try {
             const bookerName: string = safeDisplayName(booking.bookerName) ?? booking.bookerEmail;
             const meeting: string = `'${booking.meetingTypeName}'`;
@@ -1020,7 +1029,13 @@ export abstract class BaseBookingRoute<
                 .compile()
                 .build();
 
-            await this.blobStore!.put(bodyBlobKey, raw, { contentType: "message/rfc822" });
+            // Sealed when zero-access covers the host's mail: no readable copy of what the booker wrote is stored.
+            sealed = await this.zeroAccessWriter?.sealRaw(mailbox, raw, uid, now);
+            if (sealed) {
+                bodyBlobKey = sealed.bodyBlobKey;
+            } else {
+                await this.blobStore!.put(bodyBlobKey, raw, { contentType: "message/rfc822" });
+            }
             stored = true;
             const inbox: F = await findOrCreateWellKnownFolder(this.folderRepo!, this.folderClass, mailbox.uid, FolderType.INBOX);
             const message: any = await this.messageRepo!.create(
@@ -1029,13 +1044,14 @@ export abstract class BaseBookingRoute<
                     folderUid: inbox.uid,
                     mailboxUid: mailbox.uid,
                     messageId: boundIndexedValue(messageId),
-                    subject,
+                    subject: sealed ? sealed.subject : subject,
                     from: { address: from, displayName: "Bookings", type: RecipientType.TO },
                     recipients: [{ address: mailbox.primarySmtpAddress, type: RecipientType.TO }],
                     sentDate: now,
                     receivedDate: now,
                     bodyBlobKey,
-                    bodyPreview: text.replace(/\s+/g, " ").slice(0, 250),
+                    bodyPreview: sealed ? sealed.bodyPreview : text.replace(/\s+/g, " ").slice(0, 250),
+                    ...(sealed ? { zeroAccess: sealed.zeroAccess } : {}),
                     flags: { read: false, flagged: false, answered: false, forwarded: false },
                     importance: MessageImportance.NORMAL,
                     references: [],
@@ -1063,9 +1079,12 @@ export abstract class BaseBookingRoute<
         } catch (err: any) {
             this.logger?.warn(`BookingRoute: failed to file the host ${change} notification for booking ${booking.uid}: ${err.message}`);
             if (stored) {
-                // The message row was never written, so nothing refers to the body.
+                // The message row was never written, so nothing refers to the body (nor to a sealed one's index entry).
                 try {
                     await this.blobStore!.delete(bodyBlobKey);
+                    if (sealed) {
+                        await this.zeroAccessWriter!.removeIndexEntry(sealed.indexEntryUid);
+                    }
                 } catch (deleteErr: any) {
                     this.logger?.warn(`BookingRoute: failed to remove the unused body ${bodyBlobKey}: ${deleteErr.message}`);
                 }

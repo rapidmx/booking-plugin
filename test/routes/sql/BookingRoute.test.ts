@@ -422,6 +422,39 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             expect(raw).toContain("LOCATION:https://meet.example.com/ada");
         });
 
+        it("Files the host's notification sealed when zero-access covers the host's mail, keeping nothing the booker wrote readable", async () => {
+            (mailbox as any).zeroAccessKeys = [await testZeroAccessKey()];
+            mailbox = await mailboxRepo.save(mailbox);
+            const bookingType = await createBookingType();
+
+            const result = await book(bookingType.slug, validBooking());
+
+            expect(result.status).toBe(200);
+            const [notification]: any[] = await messageRepo.find();
+            expect(notification.subject).toBe("[...]");
+            expect(notification.bodyPreview).toBe("");
+            expect(notification.zeroAccess).toEqual(expect.objectContaining({ keyFingerprint: expect.any(String) }));
+            expect(notification.bodyBlobKey).toMatch(/^za\//);
+            for (const blob of blobStore.blobs.values()) {
+                expect(blob.data.toString("latin1")).not.toContain("Looking forward to it.");
+            }
+        });
+
+        it("Removes a sealed notification's blob and index entry when its row can't be written", async () => {
+            (mailbox as any).zeroAccessKeys = [await testZeroAccessKey()];
+            mailbox = await mailboxRepo.save(mailbox);
+            const bookingType = await createBookingType();
+            const route: any = objectFactory.getInstance("routes.BookingRoute");
+            vi.spyOn(route.messageRepo, "create").mockRejectedValueOnce(new Error("database is down"));
+            const removeIndexEntry = vi.spyOn(route.zeroAccessWriter, "removeIndexEntry");
+
+            const result = await book(bookingType.slug, validBooking());
+
+            expect(result.status).toBe(200);
+            expect([...blobStore.blobs.keys()].filter((key) => key.startsWith("za/"))).toEqual([]);
+            expect(removeIndexEntry).toHaveBeenCalledTimes(1);
+        });
+
         it("Puts the video call's URL in the event's location and describes the booking in its description.", async () => {
             const bookingType = await createBookingType();
 
