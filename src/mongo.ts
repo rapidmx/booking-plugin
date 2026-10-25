@@ -4,7 +4,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 /**
  * This plugin's `./mongo` entry point: exactly the classes a server host loads for a Mongo deployment - the booking models
- * and the routes mounted at `/api/mail/booking-types`, `/api/mail/booking-profiles` and `/api/mail/bookings`. Anything
+ * the routes mounted at `/api/mail/booking-types`, `/api/mail/booking-profiles` and `/api/mail/bookings`, and `BookingKeyExpiryJob`. Anything
  * else exported here would be registered by the host too, so the abstract routes and utilities stay in the package root.
  */
 export { BookingTypeMongo } from "./models/mongo/BookingTypeMongo.js";
@@ -13,3 +13,4 @@ export { BookingProfileMongo } from "./models/mongo/BookingProfileMongo.js";
 export { BookingTypeRouteMongo } from "./routes/mongo/BookingTypeRouteMongo.js";
 export { BookingRouteMongo } from "./routes/mongo/BookingRouteMongo.js";
 export { BookingProfileRouteMongo } from "./routes/mongo/BookingProfileRouteMongo.js";
+export { BookingKeyExpiryJobMongo } from "./jobs/mongo/BookingKeyExpiryJobMongo.js";

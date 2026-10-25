@@ -18,6 +18,7 @@ import {
     getPublicBookingType,
     rescheduleBooking,
 } from "../../shared/bookingApi.js";
+import { type BookingContent, bookingContent, openBookerCopy, takeBookingKey } from "../../shared/bookingProtection.js";
 import useBranding from "@rapidmx/web-client/lib/branding/useBranding.js";
 import Alert from "@rapidmx/web-client/lib/components/feedback/Alert.js";
 import Button from "@rapidmx/web-client/lib/components/buttons/Button.js";
@@ -48,12 +49,33 @@ function ManageBookingContent({ token }: { token: string }) {
     const [nextSlots, setNextSlots] = useState<SlotCursor | null>(null);
     const [loadingMore, setLoadingMore] = useState(false);
     const [submittingReschedule, setSubmittingReschedule] = useState(false);
+    // A protected booking's key, taken once from the link's `#` part (and removed from the address bar).
+    const [linkKey] = useState(() => (typeof window === "undefined" ? undefined : takeBookingKey()));
+    /** A protected booking's booker-written fields, opened with the link's key - shown, and sent along with a change for its mail. */
+    const [content, setContent] = useState<BookingContent | null>(null);
+    const [keyMissing, setKeyMissing] = useState(false);
+
+    async function show(loaded: PublicBooking) {
+        if (loaded?.protected) {
+            const opened = linkKey ? await openBookerCopy(loaded, linkKey.pkcs8) : undefined;
+            setContent(opened ?? null);
+            setKeyMissing(!opened);
+            setBooking(opened ? { ...loaded, ...opened } : loaded);
+            return;
+        }
+        setBooking(loaded);
+    }
+
+    /** What a change sends along for its mail, for a protected booking opened here. */
+    function protectedMail() {
+        return content && linkKey ? { content: bookingContent(content), linkKey: linkKey.linkKey } : undefined;
+    }
 
     function reload() {
         setLoading(true);
         setLoadError(null);
         getBookingByToken(token)
-            .then(setBooking)
+            .then(show)
             .catch((err) => setLoadError(err instanceof ApiRequestError ? err.message : "Could not load this booking."))
             .finally(() => setLoading(false));
     }
@@ -64,8 +86,8 @@ function ManageBookingContent({ token }: { token: string }) {
         setCanceling(true);
         setActionError(null);
         try {
-            const updated = await cancelBooking(token);
-            setBooking(updated);
+            const updated = await cancelBooking(token, protectedMail());
+            await show(updated);
             setConfirmingCancel(false);
         } catch (err) {
             setActionError(err instanceof ApiRequestError ? err.message : "Could not cancel this booking.");
@@ -119,8 +141,8 @@ function ManageBookingContent({ token }: { token: string }) {
         setSubmittingReschedule(true);
         setActionError(null);
         try {
-            const updated = await rescheduleBooking(token, slot.start);
-            setBooking(updated);
+            const updated = await rescheduleBooking(token, slot.start, protectedMail());
+            await show(updated);
             setRescheduling(false);
         } catch (err) {
             setActionError(err instanceof ApiRequestError ? err.message : "Could not reschedule this booking.");
@@ -156,6 +178,15 @@ function ManageBookingContent({ token }: { token: string }) {
                         </div>
 
                         {actionError && <Alert>{actionError}</Alert>}
+                        {booking.protected && !keyMissing && (
+                            <p className="text-xs text-text-muted">
+                                What you wrote is end-to-end encrypted: only you and the host can read it. It is removed from the server once the
+                                booking is over.
+                            </p>
+                        )}
+                        {keyMissing && (
+                            <Alert>This link is missing its key, so your booking&rsquo;s details can&rsquo;t be shown. Open the link exactly as it was sent to you.</Alert>
+                        )}
 
                         {booking.status === BookingStatus.CANCELLED ? (
                             <p className="text-base font-medium text-text-muted">This booking has been cancelled.</p>

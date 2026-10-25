@@ -259,6 +259,24 @@ export interface Booking extends BaseEntity {
      * system. It has no expiry and no GC job - see that route's documented limitations. */
     manageToken: string;
 
+    /** Protected end to end (meet-plugin `specs/meeting_privacy.md` §6.2): the booker-written fields above hold placeholders, the real
+     * ones are in `sealedFields` (for the host) and `guestSealedFields` (for the booker). Set at booking, never changed. */
+    keyProtected?: boolean | null;
+    /** The booker-written fields sealed to the host's zero-access certificate: CMS of each field's JSON value. Kept. */
+    sealedFields?: Record<string, string> | null;
+    /** The same, sealed to the booking key - the booker's copy, opened with the key their manage link carries. Discarded at `keyExpiresAt`. */
+    guestSealedFields?: Record<string, string> | null;
+    /** The booking key's certificate (base64 DER). Discarded at `keyExpiresAt`. */
+    meetingKeyCertificate?: string | null;
+    /** The booking key sealed to the host's zero-access certificate, so the host can send the booker their links again. */
+    keyWraps?: { mailboxUid: string; recipientFingerprint: string; kind: "meeting-key"; cms: string }[] | null;
+    /** When the booker's copy and the booking key are discarded: an hour after the slot ends. */
+    keyExpiresAt?: Date | null;
+    /** When `BookingKeyExpiryJob` discarded them. */
+    keyDiscardedAt?: Date | null;
+    /** `locationVideoUrl` is a protected meeting's link, which works only with the booking key after `#`. */
+    videoLinkKeyed?: boolean | null;
+
     cancelledAt?: Date;
 }
 

@@ -16,3 +16,5 @@ export * from "./util/BookingUtils.js";
 export * from "./routes/BaseBookingRoute.js";
 export * from "./routes/BaseBookingTypeRoute.js";
 export * from "./routes/BaseBookingProfileRoute.js";
+export * from "./jobs/BookingKeyExpiryJob.js";
+export * from "./util/BookingProtectionUtils.js";

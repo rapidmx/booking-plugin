@@ -6,6 +6,7 @@
 // are unauthenticated by design, and a test that quietly authenticated would prove nothing about the behavior
 // that actually matters. Same idiom as the anonymous share-token requests in CalendarEventRoute.test.ts.
 import { testZeroAccessKey } from "../../zeroAccessTestKey.js";
+import { bookingProtection } from "../../bookingProtectionFixture.js";
 import config from "../../config.js";
 import { request } from "@rapidrest/service-core/test";
 import { MongoConnection, MongoRepository, Server, ObjectFactory, ConnectionManager, RateLimiter, ACLAction } from "@rapidrest/service-core";
@@ -22,6 +23,8 @@ import { VideoMeetingMongo, VideoMeetingInviteeMongo } from "@rapidmx/meet-plugi
 import { InMemoryBlobStore, RecordingMailTransport, registerTestDoubles } from "../../testDoubles.js";
 import { bookingSecuritySuite } from "../bookingSecuritySuite.js";
 import { bookingMailboxSuite } from "../bookingMailboxSuite.js";
+import { bookingProtectionSuite } from "../bookingProtectionSuite.js";
+import { BookingKeyExpiryJobMongo } from "../../../src/jobs/mongo/BookingKeyExpiryJobMongo.js";
 import { bookingVideoconfIntegrationSuite } from "../bookingVideoconfIntegrationSuite.js";
 
 const mongod: MongoMemoryServer = new MongoMemoryServer({
@@ -411,12 +414,13 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
         });
 
         it("Seals the event in a host calendar zero-access encryption protects, and still mails the booker the real invitation.", async () => {
-            (mailbox as any).zeroAccessKeys = [await testZeroAccessKey()];
+            const za = await testZeroAccessKey();
+            (mailbox as any).zeroAccessKeys = [za];
             (mailbox as any).zeroAccessTypes = { calendar: true };
             mailbox = await mailboxRepo.save(mailbox);
             const bookingType = await createBookingType();
 
-            const result = await book(bookingType.slug, validBooking());
+            const result = await book(bookingType.slug, { ...validBooking(), protection: bookingProtection(mailbox.uid, za.fingerprint) });
 
             expect(result.status).toBe(200);
             const [event]: any[] = await calendarEventRepo.find({}).toArray();
@@ -430,7 +434,8 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
         });
 
         it("Files the host's notification sealed when zero-access covers the host's mail, keeping nothing the booker wrote readable", async () => {
-            (mailbox as any).zeroAccessKeys = [await testZeroAccessKey()];
+            const za = await testZeroAccessKey();
+            (mailbox as any).zeroAccessKeys = [za];
             mailbox = await mailboxRepo.save(mailbox);
             const bookingType = await createBookingType();
 
@@ -448,7 +453,8 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
         });
 
         it("Removes a sealed notification's blob and index entry when its row can't be written", async () => {
-            (mailbox as any).zeroAccessKeys = [await testZeroAccessKey()];
+            const za = await testZeroAccessKey();
+            (mailbox as any).zeroAccessKeys = [za];
             mailbox = await mailboxRepo.save(mailbox);
             const bookingType = await createBookingType();
             const route: any = objectFactory.getInstance("routes.BookingRoute");
@@ -1514,6 +1520,37 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
                 expect(result.status).toBe(404);
             });
         });
+    });
+
+    bookingProtectionSuite({
+        app: () => server.getApplication(),
+        baseUrl,
+        ownerToken: () => ownerToken,
+        mailboxUid: () => mailbox.uid,
+        protectHost: async (types: Record<string, boolean> = { calendar: true }) => {
+            const key = await testZeroAccessKey();
+            (mailbox as any).zeroAccessKeys = [key];
+            (mailbox as any).zeroAccessTypes = types;
+            mailbox = await mailboxRepo.save(mailbox);
+            return { publicKey: key.publicKey, fingerprint: key.fingerprint };
+        },
+        createBookingType: (data?: any) => createBookingType(data),
+        validBooking: (start?: string) => validBooking(start),
+        findBookings: async () => await bookingRepo.find({}).toArray(),
+        findEvents: async () => await calendarEventRepo.find({}).toArray(),
+        findMessages: async () => await messageRepo.find({}).toArray(),
+        blobText: async (key: string) => (await blobStore.get(key)).toString(),
+        sentMail: () => mailTransport.sent,
+        clearSentMail: () => {
+            mailTransport.sent = [];
+        },
+        setKeyExpiresAt: async (uid: string, at: Date) => {
+            await bookingRepo.updateOne({ uid } as any, { $set: { keyExpiresAt: at } } as any);
+        },
+        runExpiry: async () => {
+            const job: any = await objectFactory.newInstance(BookingKeyExpiryJobMongo, { name: "booking-expiry-test" });
+            await job.run();
+        },
     });
 
     bookingSecuritySuite({

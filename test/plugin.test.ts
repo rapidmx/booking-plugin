@@ -32,7 +32,7 @@ describe("plugin entry points", () => {
     it.each([
         ["mongo", MongoEntry, "Mongo", "mongo"],
         ["sql", SqlEntry, "SQL", "sql"],
-    ])("./%s exports only the mounted routes and the mailbox-scoped models", (_name, entry, suffix, datastore) => {
+    ])("./%s exports only the mounted routes, the mailbox-scoped models and the key expiry job", (_name, entry, suffix, datastore) => {
         expect(Object.fromEntries(Object.entries(entry).map(([name, clazz]) => [name, describeExport(clazz)]))).toEqual({
             [`BookingTypeRoute${suffix}`]: "route /api/mail/booking-types",
             [`BookingRoute${suffix}`]: "route /api/mail/bookings",
@@ -40,6 +40,7 @@ describe("plugin entry points", () => {
             [`BookingType${suffix}`]: `model ${datastore} mailbox-scoped`,
             [`Booking${suffix}`]: `model ${datastore} mailbox-scoped`,
             [`BookingProfile${suffix}`]: `model ${datastore} mailbox-scoped`,
+            [`BookingKeyExpiryJob${suffix}`]: "job",
         });
     });
 
@@ -86,6 +87,12 @@ describe("plugin entry points", () => {
                 "profileImageVersion",
                 "subtractBusy",
                 "validateAvailability",
+                "BookingKeyExpiryJob",
+                "PROTECTED_BOOKING_FIELDS",
+                "bookingContentOf",
+                "isLinkKey",
+                "validateBookingProtection",
+                "withLinkKey",
             ].sort(),
         );
     });

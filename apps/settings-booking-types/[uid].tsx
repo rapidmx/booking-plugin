@@ -28,6 +28,7 @@ import FormField from "@rapidmx/web-client/lib/components/forms/FormField.js";
 import TimeZonePicker from "@rapidmx/web-client/lib/components/pickers/TimeZonePicker.js";
 import { timeZoneOptions } from "@rapidmx/web-client/lib/util/timeZone.js";
 import Modal from "@rapidmx/web-client/lib/components/overlays/Modal.js";
+import { bookingContent, hostLinkKey, openHostCopy } from "../shared/bookingProtection.js";
 
 const INPUT_CLASS =
     "w-full text-sm py-2.5 px-3 border border-border rounded-sm bg-surface text-text focus:outline-none focus:border-primary";
@@ -103,6 +104,8 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
         setBookingsLoading(true);
         setBookingsError(null);
         listHostBookings(uid)
+            // A protected booking's booker-written fields open with this mailbox's zero-access key, while it is unlocked.
+            .then((listed) => Promise.all(listed.map(openHostCopy)))
             .then(setBookings)
             .catch((err) => setBookingsError(err instanceof ApiRequestError ? err.message : "Could not load this link's bookings."))
             .finally(() => setBookingsLoading(false));
@@ -112,7 +115,16 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
         setSavingVideoUrl(bookingUid);
         setBookingsError(null);
         try {
-            const updated = await setBookingLocationVideoUrl(bookingUid, videoUrlDrafts[bookingUid]?.trim() || undefined);
+            const shown = bookings.find((b) => b.uid === bookingUid);
+            // A protected booking's mail to the booker is composed from what this page opened, with the booker's link key.
+            const linkKey = shown?.protected ? await hostLinkKey(shown) : undefined;
+            const updated = await openHostCopy(
+                await setBookingLocationVideoUrl(
+                    bookingUid,
+                    videoUrlDrafts[bookingUid]?.trim() || undefined,
+                    shown?.protected && linkKey ? { content: bookingContent(shown), linkKey } : undefined,
+                ),
+            );
             setBookings((current) => current.map((b) => (b.uid === bookingUid ? updated : b)));
         } catch (err) {
             setBookingsError(err instanceof ApiRequestError ? err.message : "Could not save this booking's video URL.");

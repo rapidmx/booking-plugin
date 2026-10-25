@@ -513,3 +513,19 @@ treatment.
 ### 2026-09-28 - Always wait for CI to go green before releasing
 
 Standing process rule, applies to every rapidmx/rapidrest repo: push pending commits, wait for the GitHub Actions **Build** workflow on that push to report `success` (`https://api.github.com/repos/<org>/<repo>/actions/runs`, or ask JP for the downloaded log archive if API log access needs auth - it 403s without a token), and only then run `npx @rapidrest/cli release ...`. Do not tag/release first and diagnose CI failures afterward. During a 2026-09-28 multi-repo release wave, restapi was released immediately after pushing pending commits without waiting for CI; CI then failed on a real coverage-threshold regression the pending changes introduced (a missing test for `BasePluginRoute.newestSearchResult()`'s catch branch) - not a flake, as an incomplete local-only reproduction first suggested. Because the release commit/tag were already pushed, the fix had to land as a follow-up commit on top of an already-tagged release instead of before it.
+
+## 2026-10-24: Protected bookings and sealed host notifications
+
+- Fixed: `fileHostNotification` wrote the notification readable even for a host whose mail is zero-access protected. It now goes through `newZeroAccessWriter(...).sealRaw()`, with `zeroAccessIndexEntryClass` on the backend routes; a failed row write deletes the sealed blob and its index entry.
+- Protected bookings: meet-plugin `specs/meeting_privacy.md` section 6.2. A booking is protected while `recordSealer.target("calendar", mailbox)` is set.
+  - The public type carries `hostCertificate`/`hostCertificateFingerprint`, and a protected host refuses an unprotected booking (and vice versa).
+  - `util/BookingProtectionUtils.ts` validates `protection`: certificate, an expiry at most 7 days after the slot, wraps only to the host's key, sealed field maps limited to `PROTECTED_BOOKING_FIELDS`, and `linkKey`. It also exports `bookingContentOf` and `withLinkKey`.
+  - Booking stores placeholders: `bookerName` = email, other fields null. It also keeps `sealedFields` (the host's), `guestSealedFields`, `meetingKeyCertificate`, `keyWraps`, `keyExpiresAt` and `videoLinkKeyed`.
+  - Event attendee names are dropped.
+  - Mail uses `shownBooking(booking, content)` plus `linkKey`: the manage link and keyed video link get `#k=`.
+  - Reschedule, cancel and the host's video link take `{ content, linkKey }`.
+  - Host notifications are redacted unless filed sealed.
+  - `toPublicBooking(..., audience)`: the booker gets the guest copy and certificate; the host gets the host copy and wraps.
+  - `BookingKeyExpiryJob` (`./mongo`/`./sql`, every 5 minutes) drops the guest copy, certificate and wraps.
+  - The video meeting is minted protected via meet-plugin `createSingleInviteeVideoMeeting(..., protection)`, with the same key and a sealed `meetingTitle`.
+- Client: `apps/shared/bookingProtection.ts` provides `protectBooking`, `takeBookingKey`, `openBookerCopy`, `openHostCopy` (web-client `openSealedRecord`), `hostLinkKey` and `bookingContent`. Used by the booking form, the manage page (it shows a missing-key notice) and the host list.

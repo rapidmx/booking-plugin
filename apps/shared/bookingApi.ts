@@ -15,6 +15,7 @@
  * (non-`AppShell`) pages.
  */
 
+import type { BookingContent, BookingProtectionInput } from "./bookingProtection.js";
 import { ApiRequestError, apiFetch, apiUrl, withCsrfHeader } from "@rapidmx/web-client/lib/util/api.js";
 import { ListParams, buildQuery } from "@rapidmx/web-client/lib/util/apiQuery.js";
 
@@ -183,11 +184,17 @@ export function listHostBookings(bookingTypeUid: string): Promise<PublicBooking[
 /** Host-only. Sets (or, with `undefined`, clears) one booking's video call URL - the escape hatch for a
  * `VIDEO` location option that was left blank at meeting-type setup time, or to hand out a unique link for
  * just this booking. 400 if the booking's location isn't `VIDEO`. */
-export function setBookingLocationVideoUrl(uid: string, locationVideoUrl: string | undefined): Promise<PublicBooking> {
+export function setBookingLocationVideoUrl(uid: string, locationVideoUrl: string | undefined, protectedMail?: ProtectedMail): Promise<PublicBooking> {
     return apiFetch(`/mail/bookings/host/${encodeURIComponent(uid)}/location`, {
         method: "POST",
-        body: JSON.stringify({ locationVideoUrl }),
+        body: JSON.stringify({ locationVideoUrl, ...protectedMail }),
     });
+}
+
+/** For a protected booking: what the booker wrote and the link key, sent along so the mail the request sends shows them (never stored). */
+export interface ProtectedMail {
+    content?: BookingContent;
+    linkKey?: string;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -210,6 +217,10 @@ export interface PublicMeetingType {
 }
 
 export interface PublicBookingType {
+    /** Present while the host's calendar is protected by zero-access encryption: the booking is then made protected
+     * (`protectBooking()`), sealing what the booker writes to this certificate (base64 DER). */
+    hostCertificate?: string;
+    hostCertificateFingerprint?: string;
     mailboxUid: string;
     slug: string;
     name: string;
@@ -281,6 +292,15 @@ export interface PublicBooking {
     avatarVersion?: string;
     /** Set when the host's mailbox has a banner. */
     bannerVersion?: string;
+    /** Protected end to end (`bookingProtection.ts`): the booker-written fields above are placeholders. */
+    protected?: true;
+    /** The booker's copy, opened with their manage link's key. */
+    guestSealedFields?: Record<string, string>;
+    meetingKeyCertificate?: string;
+    keyExpiresAt?: string;
+    /** The host's copy, opened with the host's zero-access key (`/host` only). */
+    sealedFields?: Record<string, string>;
+    keyWraps?: { mailboxUid: string; recipientFingerprint: string; kind: "meeting-key"; cms: string }[];
 }
 
 export interface BookSlotInput {
@@ -295,6 +315,8 @@ export interface BookSlotInput {
     bookerPhone?: string;
     /** Required when the chosen location option's type is `OTHER`. */
     bookerLocationInstructions?: string;
+    /** Required while the host's calendar is protected (`PublicBookingType.hostCertificate`) - `protectBooking()`. */
+    protection?: BookingProtectionInput;
 }
 
 export function bookSlot(mailboxUid: string, slug: string, input: BookSlotInput): Promise<PublicBooking> {
@@ -308,14 +330,14 @@ export function getBookingByToken(token: string): Promise<PublicBooking> {
     return apiFetch(`/mail/bookings/manage/${encodeURIComponent(token)}`);
 }
 
-export function cancelBooking(token: string): Promise<PublicBooking> {
-    return apiFetch(`/mail/bookings/manage/${encodeURIComponent(token)}/cancel`, { method: "POST" });
+export function cancelBooking(token: string, protectedMail?: ProtectedMail): Promise<PublicBooking> {
+    return apiFetch(`/mail/bookings/manage/${encodeURIComponent(token)}/cancel`, { method: "POST", body: JSON.stringify({ ...protectedMail }) });
 }
 
-export function rescheduleBooking(token: string, start: string): Promise<PublicBooking> {
+export function rescheduleBooking(token: string, start: string, protectedMail?: ProtectedMail): Promise<PublicBooking> {
     return apiFetch(`/mail/bookings/manage/${encodeURIComponent(token)}/reschedule`, {
         method: "POST",
-        body: JSON.stringify({ start }),
+        body: JSON.stringify({ start, ...protectedMail }),
     });
 }
 

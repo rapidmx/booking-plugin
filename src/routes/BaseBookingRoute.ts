@@ -65,6 +65,15 @@ import {
     type BookingEventDetails,
 } from "../util/BookingEventUtils.js";
 import { Booking, BookingLocationOption, BookingLocationType, BookingMeetingType, BookingProfile, BookingStatus, BookingType } from "../models/types.js";
+import {
+    type BookingContent,
+    bookingContentOf,
+    type BookingProtection,
+    type BookingProtectionBody,
+    isLinkKey,
+    validateBookingProtection,
+    withLinkKey,
+} from "../util/BookingProtectionUtils.js";
 import { stripTrustedRoles } from "../util/RouteAccessUtils.js";
 import { profileImageVersion } from "./BaseBookingProfileRoute.js";
 const { Config, Init, Inject, Logger } = ObjectDecorators;
@@ -170,6 +179,10 @@ export interface PublicBookingType {
     avatarVersion?: string;
     /** Same as `avatarVersion`, for the banner. */
     bannerVersion?: string;
+    /** Present while zero-access encryption covers the host's calendar: the host's zero-access certificate (base64 DER) and its
+     * fingerprint. The booking page then books protected (`BookingProtectionUtils.ts`), sealing what the booker writes to it. */
+    hostCertificate?: string;
+    hostCertificateFingerprint?: string;
 }
 
 /** The public projection of a `Booking`, as returned to the booker holding its `manageToken`. */
@@ -199,6 +212,16 @@ export interface PublicBooking {
     avatarVersion?: string;
     /** See `PublicBookingType.bannerVersion`. */
     bannerVersion?: string;
+    /** Protected end to end: the booker-written fields above are placeholders; the booker opens `guestSealedFields` with the key their
+     * manage link carries, the host opens `sealedFields` with their zero-access key. */
+    protected?: true;
+    guestSealedFields?: Record<string, string>;
+    meetingKeyCertificate?: string;
+    keyExpiresAt?: Date;
+    /** To the host only. */
+    sealedFields?: Record<string, string>;
+    /** To the host only: the booking key sealed to the host's zero-access certificate. */
+    keyWraps?: { mailboxUid: string; recipientFingerprint: string; kind: "meeting-key"; cms: string }[];
 }
 
 /** The request body accepted by `book()`. */
@@ -214,6 +237,8 @@ interface BookingRequestBody {
     bookerPhone?: string;
     /** Required, and used, only when the chosen location option's type is `OTHER`. */
     bookerLocationInstructions?: string;
+    /** Required while zero-access encryption covers the host's calendar (`PublicBookingType.hostCertificate`); refused otherwise. */
+    protection?: BookingProtectionBody;
 }
 
 /** A very small sanity check on a booker-supplied address - deliberately not a full RFC 5322 parser. Its job is
@@ -476,8 +501,9 @@ export abstract class BaseBookingRoute<
         }));
     }
 
-    private async toPublicBookingType(bookingType: BT): Promise<PublicBookingType> {
+    private async toPublicBookingType(bookingType: BT, host?: { certificate: string; fingerprint: string }): Promise<PublicBookingType> {
         return {
+            ...(host ? { hostCertificate: host.certificate, hostCertificateFingerprint: host.fingerprint } : {}),
             mailboxUid: bookingType.mailboxUid,
             slug: bookingType.slug,
             name: bookingType.name,
@@ -492,8 +518,20 @@ export abstract class BaseBookingRoute<
         };
     }
 
-    private async toPublicBooking(booking: B, bookingType: BT, includeToken: boolean): Promise<PublicBooking> {
+    /** `audience`: who is asking - the booker (by the manage token) gets their own sealed copy, the host theirs and the key's wrap. */
+    private async toPublicBooking(booking: B, bookingType: BT, includeToken: boolean, audience: "booker" | "host" = "booker"): Promise<PublicBooking> {
+        const protection: Partial<PublicBooking> = booking.keyProtected
+            ? audience === "host"
+                ? { protected: true, sealedFields: booking.sealedFields ?? undefined, keyWraps: booking.keyWraps ?? undefined }
+                : {
+                      protected: true,
+                      guestSealedFields: booking.guestSealedFields ?? undefined,
+                      meetingKeyCertificate: booking.meetingKeyCertificate ?? undefined,
+                      keyExpiresAt: booking.keyExpiresAt ?? undefined,
+                  }
+            : {};
         return {
+            ...protection,
             uid: booking.uid,
             mailboxUid: bookingType.mailboxUid,
             bookingTypeSlug: bookingType.slug,
@@ -755,6 +793,7 @@ export abstract class BaseBookingRoute<
         mailboxUid: string,
         title: string,
         invitee: { email: string; displayName?: string },
+        protection?: Record<string, unknown>,
     ): Promise<string | undefined> {
         if (!PluginRegistry.isActive(VIDEOCONF_PLUGIN_NAME)) {
             return undefined;
@@ -767,7 +806,7 @@ export abstract class BaseBookingRoute<
             const { createSingleInviteeVideoMeeting }: { createSingleInviteeVideoMeeting: CreateSingleInviteeVideoMeetingFn } = await import(
                 VIDEOCONF_PLUGIN_NAME
             );
-            return await createSingleInviteeVideoMeeting(this._objectFactory!, backend.meetingClass, backend.inviteeClass, mailboxUid, title, invitee);
+            return await createSingleInviteeVideoMeeting(this._objectFactory!, backend.meetingClass, backend.inviteeClass, mailboxUid, title, invitee, protection);
         } catch (err: any) {
             this.logger?.warn(`BookingRoute: failed to mint a video meeting for mailbox ${mailboxUid}: ${err.message}`);
             return undefined;
@@ -797,6 +836,8 @@ export abstract class BaseBookingRoute<
         slot: OccurrenceWindow,
         body: BookingRequestBody,
         resolvedVideoUrl?: string,
+        protection?: BookingProtection,
+        videoLinkKeyed?: boolean,
     ): Promise<B> {
         const bookerEmail: string = body.bookerEmail!.trim().toLowerCase();
         const confirmed: boolean = !bookingType.requiresApproval;
@@ -831,7 +872,8 @@ export abstract class BaseBookingRoute<
                 attendees: [
                     {
                         address: bookerEmail,
-                        displayName: body.bookerName!.trim(),
+                        // Attendee names are stored readable: a protected booking's booker is named by address.
+                        displayName: protection ? undefined : body.bookerName!.trim(),
                         role: AttendeeRole.REQUIRED,
                         responseStatus: AttendeeResponseStatus.ACCEPTED,
                         isOrganizer: false,
@@ -860,6 +902,22 @@ export abstract class BaseBookingRoute<
                 meetingTypeUid: meetingType.uid,
                 meetingTypeName: meetingType.name,
                 ...details,
+                ...(protection
+                    ? {
+                          // What the booker wrote is stored only sealed; the plaintext served the event and the mail this request sends.
+                          bookerName: bookerEmail,
+                          bookerNotes: undefined,
+                          bookerPhone: undefined,
+                          bookerLocationInstructions: undefined,
+                          keyProtected: true,
+                          sealedFields: protection.sealedFields,
+                          guestSealedFields: protection.guestSealedFields,
+                          meetingKeyCertificate: protection.certificate,
+                          keyWraps: protection.keyWraps,
+                          keyExpiresAt: protection.keyExpiresAt,
+                          videoLinkKeyed: videoLinkKeyed || undefined,
+                      }
+                    : {}),
                 bookerTimezone: body.bookerTimezone,
                 startDate: slot.start,
                 endDate: slot.end,
@@ -898,9 +956,30 @@ export abstract class BaseBookingRoute<
         }
     }
 
-    private async sendBookingMail(bookingType: BT, booking: B, event: CE, mailbox: M, cancelled: boolean): Promise<void> {
+    /** The booker-written fields a book request carries, as the mail it sends shows them. */
+    private requestContent(body: BookingRequestBody): BookingContent {
+        return {
+            bookerName: body.bookerName?.trim(),
+            bookerNotes: body.bookerNotes,
+            bookerPhone: body.bookerPhone?.trim(),
+            bookerLocationInstructions: body.bookerLocationInstructions?.trim(),
+        };
+    }
+
+    /** `booking` as a mail about it shows it: a protected booking's placeholders replaced by the plaintext `content` a request carried
+     * (never stored), when it carried any. */
+    private shownBooking(booking: B, content: BookingContent | undefined): B {
+        return booking.keyProtected && content ? ({ ...booking, ...content }) : booking;
+    }
+
+    /** `linkKey`: a protected booking's link key, which the mailed manage link and a protected video link carry after `#`. */
+    private async sendBookingMail(bookingType: BT, shown: B, event: CE, mailbox: M, cancelled: boolean, linkKey?: string): Promise<void> {
+        const key: string | undefined = shown.keyProtected ? linkKey : undefined;
+        const booking: B =
+            key && shown.videoLinkKeyed && shown.locationVideoUrl ? ({ ...shown, locationVideoUrl: withLinkKey(shown.locationVideoUrl, key) }) : shown;
         try {
-            const manageUrl: string | undefined = this.manageUrl(booking);
+            const plainManageUrl: string | undefined = this.manageUrl(booking);
+            const manageUrl: string | undefined = plainManageUrl && withLinkKey(plainManageUrl, key);
             // `hostDisplayName` is the host's own input: an address-like (or multi-line) one is left out of the From and the
             // invite's ORGANIZER name, and the body names the host by address instead (`safeDisplayName()`).
             const hostName: string | undefined = safeDisplayName(bookingType.hostDisplayName);
@@ -970,6 +1049,11 @@ export abstract class BaseBookingRoute<
         change: "booked" | "rescheduled" | "cancelled" = "booked",
         previous?: { start: Date; end: Date },
     ): Promise<void> {
+        // A protected booking's notification carries what the booker wrote only when it is filed sealed too.
+        const redact: boolean = !!booking.keyProtected && !(await this.zeroAccessWriter?.target(mailbox));
+        if (redact) {
+            booking = { ...booking, bookerName: booking.bookerEmail, bookerNotes: undefined, bookerPhone: undefined, bookerLocationInstructions: undefined };
+        }
         const uid: string = crypto.randomUUID();
         let bodyBlobKey: string = `booking-notifications/${uid}`;
         let stored: boolean = false;
@@ -998,6 +1082,9 @@ export abstract class BaseBookingRoute<
             }
             if (bookingType.requiresApproval && change !== "cancelled") {
                 lines.push("This booking is awaiting your confirmation.");
+            }
+            if (redact) {
+                lines.push("What the booker wrote is end-to-end encrypted: open the booking in RapidMX to read it.");
             }
 
             const domain: string = mailbox.primarySmtpAddress.split("@")[1] || "localhost";
@@ -1096,7 +1183,10 @@ export abstract class BaseBookingRoute<
     @Description("Returns the publicly visible details of an enabled booking type. Requires no authentication.")
     @Get("/types/:mailboxUid/:slug")
     public async publicBookingType(@Param("mailboxUid") mailboxUid: string, @Param("slug") slug: string): Promise<PublicBookingType> {
-        return await this.toPublicBookingType(await this.requireBookingType(mailboxUid, slug));
+        const bookingType: BT = await this.requireBookingType(mailboxUid, slug);
+        const mailbox: M | undefined = await this.mailboxRepo!.findOne(bookingType.mailboxUid, { ignoreACL: true });
+        const target = mailbox ? await this.recordSealer?.target("calendar", mailbox) : undefined;
+        return await this.toPublicBookingType(bookingType, target && { certificate: target.key.publicKey, fingerprint: target.key.fingerprint });
     }
 
     @Summary("Lists the bookable slots for a booking type.")
@@ -1245,6 +1335,21 @@ export abstract class BaseBookingRoute<
         if (!mailbox) {
             throw new ApiError(ApiErrors.INTERNAL_ERROR, 500, ApiErrorMessages.INTERNAL_ERROR);
         }
+        // Zero-access covers the host's calendar: the booking is protected, or not taken (an old page couldn't protect it).
+        const host = await this.recordSealer?.target("calendar", mailbox);
+        if (host && !body.protection) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "This booking page is out of date - reload it to book.");
+        }
+        if (!host && body.protection) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "This host doesn't take protected bookings.");
+        }
+        const protection: BookingProtection | undefined = host
+            ? validateBookingProtection(body.protection!, mailbox.uid, host.key.fingerprint, slot.end, Date.now())
+            : undefined;
+        const mintsVideo: boolean = locationOption.type === BookingLocationType.VIDEO && !locationOption.videoUrl;
+        if (protection && mintsVideo && !protection.meetingTitle) {
+            throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "'protection.meetingTitle' is required for a video booking.");
+        }
 
         // A video location with no host-preset URL of its own gets one minted automatically when
         // `@rapidmx/meet-plugin` is installed and active - see `maybeCreateVideoMeetingJoinUrl()`'s doc
@@ -1252,21 +1357,41 @@ export abstract class BaseBookingRoute<
         // failure can never roll back, or even touch, the booking's own atomic write. Every other location
         // (including a video one with its own preset `videoUrl`) never even calls it - `resolvedVideoUrl` is then
         // just `locationOption.videoUrl` passed through unchanged, exactly today's behavior.
-        const resolvedVideoUrl: string | undefined =
-            locationOption.type === BookingLocationType.VIDEO && !locationOption.videoUrl
-                ? await this.maybeCreateVideoMeetingJoinUrl(bookingType.mailboxUid, meetingType.name, {
-                      email: body.bookerEmail!.trim().toLowerCase(),
-                      displayName: body.bookerName!.trim(),
-                  })
-                : locationOption.videoUrl;
+        const resolvedVideoUrl: string | undefined = mintsVideo
+            ? await this.maybeCreateVideoMeetingJoinUrl(
+                  bookingType.mailboxUid,
+                  meetingType.name,
+                  { email: body.bookerEmail!.trim().toLowerCase(), displayName: body.bookerName!.trim() },
+                  // The meeting is protected with the booking's own key, which the booker's video link carries too.
+                  protection && {
+                      meetingKey: { certificate: protection.certificate },
+                      keyExpiresAt: protection.keyExpiresAt.toISOString(),
+                      keyWraps: protection.keyWraps,
+                      sealedFields: { title: protection.meetingTitle },
+                  },
+              )
+            : locationOption.videoUrl;
 
-        const booking: B = await this.persistBooking(bookingType, meetingType, locationOption, folder, mailbox, slot, body, resolvedVideoUrl);
+        const booking: B = await this.persistBooking(
+            bookingType,
+            meetingType,
+            locationOption,
+            folder,
+            mailbox,
+            slot,
+            body,
+            resolvedVideoUrl,
+            protection,
+            !!(protection && mintsVideo && resolvedVideoUrl),
+        );
+        // What the mail this request sends says: the plaintext the request carried, never what is stored.
+        const shown: B = protection ? this.shownBooking(booking, this.requestContent(body)) : booking;
 
         // Deliberately outside `persistBooking()`'s transaction: mailing a confirmation for a booking that
         // subsequently rolled back is not something a `try`/`catch` could take back.
         const event: CE | undefined = await this.calendarEventRepo!.findOne(booking.calendarEventUid, { ignoreACL: true });
         if (event) {
-            await this.sendBookingMail(bookingType, booking, event, mailbox, false);
+            await this.sendBookingMail(bookingType, shown, event, mailbox, false, protection?.linkKey);
             await this.calendarEventRepo!.update(
                 { uid: event.uid, version: (event as any).version, inviteSequenceSent: event.sequence } as any,
                 event,
@@ -1297,7 +1422,7 @@ export abstract class BaseBookingRoute<
     )
     @RateLimit()
     @Post("/manage/:token/cancel")
-    public async cancel(@Param("token") token: string): Promise<PublicBooking> {
+    public async cancel(@Param("token") token: string, body: { content?: unknown } | undefined): Promise<PublicBooking> {
         const booking: B = await this.requireBookingByToken(token);
         const bookingType: BT | undefined = await this.bookingTypeRepo!.findOne(booking.bookingTypeUid, { ignoreACL: true });
         if (!bookingType) {
@@ -1336,7 +1461,7 @@ export abstract class BaseBookingRoute<
             // Only the request that actually cancelled it tells the host - not a repeat.
             const mailbox: M | undefined = await this.mailboxRepo!.findOne(booking.mailboxUid, { ignoreACL: true });
             if (mailbox) {
-                await this.fileHostNotification(bookingType, updated, mailbox, "cancelled");
+                await this.fileHostNotification(bookingType, this.shownBooking(updated, bookingContentOf(body?.content)), mailbox, "cancelled");
             }
         }
         return await this.toPublicBooking(updated, bookingType, false);
@@ -1349,7 +1474,7 @@ export abstract class BaseBookingRoute<
     )
     @RateLimit()
     @Post("/manage/:token/reschedule")
-    public async reschedule(@Param("token") token: string, body: { start?: string } | undefined): Promise<PublicBooking> {
+    public async reschedule(@Param("token") token: string, body: { start?: string; content?: unknown; linkKey?: unknown } | undefined): Promise<PublicBooking> {
         const booking: B = await this.requireBookingByToken(token);
         if (booking.status === BookingStatus.CANCELLED) {
             throw new ApiError(ApiErrors.INVALID_REQUEST, 400, "A cancelled booking cannot be rescheduled.");
@@ -1390,13 +1515,15 @@ export abstract class BaseBookingRoute<
                 event,
                 { ignoreACL: true },
             );
-            await this.sendBookingMail(bookingType, updated, moved, mailbox, false);
+            // A protected booking's mail is composed from what the booker's manage page sends with the request (never stored).
+            const shown: B = this.shownBooking(updated, bookingContentOf(body?.content));
+            await this.sendBookingMail(bookingType, shown, moved, mailbox, false, isLinkKey(body?.linkKey) ? body.linkKey : undefined);
             await this.calendarEventRepo!.update(
                 { uid: moved.uid, version: (moved as any).version, inviteSequenceSent: moved.sequence } as any,
                 moved,
                 { ignoreACL: true },
             );
-            await this.fileHostNotification(bookingType, updated, mailbox, "rescheduled", previous);
+            await this.fileHostNotification(bookingType, shown, mailbox, "rescheduled", previous);
             return await this.toPublicBooking(updated, bookingType, false);
         }
 
@@ -1445,7 +1572,7 @@ export abstract class BaseBookingRoute<
             { bookingTypeUid, sort: { startDate: "DESC" }, limit: MAX_HOST_BOOKINGS } as any,
             { ignoreACL: true, limit: MAX_HOST_BOOKINGS },
         );
-        return await Promise.all(bookings.map((booking) => this.toPublicBooking(booking, bookingType, false)));
+        return await Promise.all(bookings.map((booking) => this.toPublicBooking(booking, bookingType, false, "host")));
     }
 
     @Summary("Sets or clears a booking's video call URL.")
@@ -1457,7 +1584,7 @@ export abstract class BaseBookingRoute<
     @Post("/host/:uid/location")
     public async setBookingLocationVideoUrl(
         @Param("uid") uid: string,
-        body: { locationVideoUrl?: string } | undefined,
+        body: { locationVideoUrl?: string; content?: unknown; linkKey?: unknown } | undefined,
         @AuthUser user?: JWTUser,
     ): Promise<PublicBooking> {
         const booking: B | undefined = await this.bookingRepo!.findOne(uid, { ignoreACL: true });
@@ -1479,10 +1606,13 @@ export abstract class BaseBookingRoute<
         // `null`, not `undefined`, to clear a previously-set URL - an undefined value is dropped from the
         // generated SQL `UPDATE`, leaving the column stale (same reasoning as `BaseBookingProfileRoute.remove()`).
         const updated: B = await this.bookingRepo!.update(
-            { uid: booking.uid, version: (booking as any).version, locationVideoUrl: videoUrl ?? null } as any,
+            // The host's own link isn't a protected meeting's: it works without the booking key.
+            { uid: booking.uid, version: (booking as any).version, locationVideoUrl: videoUrl ?? null, videoLinkKeyed: null } as any,
             booking,
             { ignoreACL: true },
         );
+        // A protected booking's event and mail are composed from what the host's client sends with the request (never stored).
+        const shown: B = this.shownBooking(updated, bookingContentOf(body?.content));
 
         // The event on the calendar names the link too (its location and description), so it follows, and the booker is sent the
         // updated invitation.
@@ -1493,8 +1623,8 @@ export abstract class BaseBookingRoute<
                 uid: event.uid,
                 version: (event as any).version,
                 // `null` clears, for the same reason as above.
-                location: bookingEventLocation(updated) ?? null,
-                ...bookingEventDescription(updated),
+                location: bookingEventLocation(shown) ?? null,
+                ...bookingEventDescription(shown),
                 sequence: event.sequence + 1,
             };
             await this.recordSealer?.sealWrite("calendar", mailbox, patch, event);
@@ -1503,7 +1633,7 @@ export abstract class BaseBookingRoute<
             // generic one (which has no manage link and no reminder). Without the mailbox there is nobody to send it as, and the
             // raised `sequence` is left for the job.
             if (mailbox) {
-                await this.sendBookingMail(bookingType, updated, changed, mailbox, false);
+                await this.sendBookingMail(bookingType, shown, changed, mailbox, false, isLinkKey(body?.linkKey) ? body.linkKey : undefined);
                 await this.calendarEventRepo!.update(
                     { uid: changed.uid, version: (changed as any).version, inviteSequenceSent: changed.sequence } as any,
                     changed,
@@ -1511,6 +1641,6 @@ export abstract class BaseBookingRoute<
                 );
             }
         }
-        return await this.toPublicBooking(updated, bookingType, false);
+        return await this.toPublicBooking(updated, bookingType, false, "host");
     }
 }

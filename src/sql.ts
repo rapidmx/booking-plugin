@@ -4,7 +4,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 /**
  * This plugin's `./sql` entry point: exactly the classes a server host loads for a SQL deployment - the booking models
- * and the routes mounted at `/api/mail/booking-types`, `/api/mail/booking-profiles` and `/api/mail/bookings`. Anything
+ * the routes mounted at `/api/mail/booking-types`, `/api/mail/booking-profiles` and `/api/mail/bookings`, and `BookingKeyExpiryJob`. Anything
  * else exported here would be registered by the host too, so the abstract routes and utilities stay in the package root.
  */
 export { BookingTypeSQL } from "./models/sql/BookingTypeSQL.js";
@@ -13,3 +13,4 @@ export { BookingProfileSQL } from "./models/sql/BookingProfileSQL.js";
 export { BookingTypeRouteSQL } from "./routes/sql/BookingTypeRouteSQL.js";
 export { BookingRouteSQL } from "./routes/sql/BookingRouteSQL.js";
 export { BookingProfileRouteSQL } from "./routes/sql/BookingProfileRouteSQL.js";
+export { BookingKeyExpiryJobSQL } from "./jobs/sql/BookingKeyExpiryJobSQL.js";

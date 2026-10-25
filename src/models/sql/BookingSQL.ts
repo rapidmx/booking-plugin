@@ -120,6 +120,46 @@ export class BookingSQL extends BaseEntity implements Booking {
     @Description("The unguessable token embedded in the booker's manage link. Minted server-side, immutable.")
     public manageToken: string = "";
 
+    @Column({ type: "boolean", nullable: true })
+    @Description("Protected end to end: the booker-written fields are sealed.")
+    @Nullable
+    public keyProtected?: boolean | null;
+
+    @Column({ type: "simple-json", nullable: true })
+    @Description("The booker-written fields sealed to the host's zero-access certificate.")
+    @Nullable
+    public sealedFields?: Record<string, string> | null;
+
+    @Column({ type: "simple-json", nullable: true })
+    @Description("The booker-written fields sealed to the booking key: the booker's copy.")
+    @Nullable
+    public guestSealedFields?: Record<string, string> | null;
+
+    @Column({ type: "text", nullable: true })
+    @Description("The booking key's certificate.")
+    @Nullable
+    public meetingKeyCertificate?: string | null;
+
+    @Column({ type: "simple-json", nullable: true })
+    @Description("The booking key sealed to the host's zero-access certificate.")
+    @Nullable
+    public keyWraps?: { mailboxUid: string; recipientFingerprint: string; kind: "meeting-key"; cms: string }[] | null;
+
+    @Column({ nullable: true })
+    @Description("When the booker's copy and the booking key are discarded.")
+    @Nullable
+    public keyExpiresAt?: Date;
+
+    @Column({ nullable: true })
+    @Description("When they were discarded.")
+    @Nullable
+    public keyDiscardedAt?: Date;
+
+    @Column({ type: "boolean", nullable: true })
+    @Description("The video link works only with the booking key after #.")
+    @Nullable
+    public videoLinkKeyed?: boolean | null;
+
     @Column({ nullable: true })
     @Description("When this booking was cancelled, if it has been.")
     @Nullable
@@ -148,6 +188,14 @@ export class BookingSQL extends BaseEntity implements Booking {
             this.endDate = other.endDate !== undefined ? other.endDate : this.endDate;
             this.status = other.status !== undefined ? other.status : this.status;
             this.manageToken = other.manageToken !== undefined ? other.manageToken : this.manageToken;
+            this.keyProtected = "keyProtected" in other ? other.keyProtected : this.keyProtected;
+            this.sealedFields = "sealedFields" in other ? other.sealedFields : this.sealedFields;
+            this.guestSealedFields = "guestSealedFields" in other ? other.guestSealedFields : this.guestSealedFields;
+            this.meetingKeyCertificate = "meetingKeyCertificate" in other ? other.meetingKeyCertificate : this.meetingKeyCertificate;
+            this.keyWraps = "keyWraps" in other ? other.keyWraps : this.keyWraps;
+            this.keyExpiresAt = "keyExpiresAt" in other ? other.keyExpiresAt : this.keyExpiresAt;
+            this.keyDiscardedAt = "keyDiscardedAt" in other ? other.keyDiscardedAt : this.keyDiscardedAt;
+            this.videoLinkKeyed = "videoLinkKeyed" in other ? other.videoLinkKeyed : this.videoLinkKeyed;
             this.cancelledAt = "cancelledAt" in other ? other.cancelledAt : this.cancelledAt;
         }
     }

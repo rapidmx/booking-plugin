@@ -21,6 +21,7 @@ import { BookingCard, BookingPageShell } from "../_BookingChrome.js";
 import { LOCATION_TYPE_LABELS, locationSummary } from "../_locationSummary.js";
 import { SlotCursor, appendSlots, fetchSlotPage, initialSlotCursor } from "../_slotPaging.js";
 import { describeTimeZone } from "@rapidmx/web-client/lib/util/timeZone.js";
+import { protectBooking } from "../../shared/bookingProtection.js";
 
 const INPUT_CLASS =
     "w-full text-base py-3 px-3.5 border border-border rounded-md bg-surface text-text focus:outline-none focus:border-primary";
@@ -176,19 +177,35 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
         }
         setBooking(true);
         try {
+            const content = {
+                bookerName: bookerName.trim(),
+                bookerNotes: bookerNotes.trim() || undefined,
+                bookerPhone: selectedLocationOption.type === BookingLocationType.PHONE ? bookerPhone.trim() : undefined,
+                bookerLocationInstructions:
+                    selectedLocationOption.type === BookingLocationType.OTHER ? bookerLocationInstructions.trim() : undefined,
+            };
+            // The host's calendar is protected: what the booker writes is sealed before it leaves this page.
+            const protection = bookingType!.hostCertificate
+                ? await protectBooking(
+                      mailboxUid,
+                      bookingType!.hostCertificate,
+                      bookingType!.hostCertificateFingerprint!,
+                      content,
+                      new Date(selectedSlot!.end),
+                      selectedLocationOption.type === BookingLocationType.VIDEO ? `${selectedMeetingType!.name} with ${content.bookerName}` : undefined,
+                  )
+                : undefined;
             const result = await bookSlot(mailboxUid, slug, {
                 start: selectedSlot!.start,
                 meetingTypeUid: selectedMeetingType!.uid,
                 locationOptionUid: selectedLocationOption.uid,
-                bookerName: bookerName.trim(),
+                ...content,
                 bookerEmail: bookerEmail.trim(),
-                bookerNotes: bookerNotes.trim() || undefined,
                 bookerTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                bookerPhone: selectedLocationOption.type === BookingLocationType.PHONE ? bookerPhone.trim() : undefined,
-                bookerLocationInstructions:
-                    selectedLocationOption.type === BookingLocationType.OTHER ? bookerLocationInstructions.trim() : undefined,
+                protection,
             });
-            setManageUrl(result.manageToken ? bookingManageUrl(result.manageToken) : null);
+            // A protected booking's manage link carries its key after `#` - this page is the only place it exists besides the mail.
+            setManageUrl(result.manageToken ? `${bookingManageUrl(result.manageToken)}${protection ? `#${protection.linkKey}` : ""}` : null);
             setConfirmedBooking(result);
             setConfirmed(true);
         } catch (err) {
