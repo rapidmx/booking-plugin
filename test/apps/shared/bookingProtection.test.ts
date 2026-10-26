@@ -7,7 +7,7 @@ import "reflect-metadata";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fromBase64, toBase64 } from "@rapidmx/web-client/lib/crypto/encoding.js";
 import { generateMeetingKey, importMeetingKey } from "@rapidmx/web-client/lib/crypto/meetingKeys.js";
-import { decryptEnvelopedDataWithKeys } from "@rapidmx/web-client/lib/crypto/smime.js";
+import { decryptEnvelopedDataWithKeys, encryptForRecipients } from "@rapidmx/web-client/lib/crypto/smime.js";
 
 const { getUnlockedKeys } = vi.hoisted(() => ({ getUnlockedKeys: vi.fn() }));
 vi.mock("@rapidmx/web-client/lib/crypto/keySession.js", () => ({ getUnlockedKeys, subscribeKeySession: () => () => undefined }));
@@ -25,6 +25,9 @@ async function hostKey() {
 
 const open = async (sealed: string, keys: any[]) => JSON.parse(new TextDecoder().decode(await decryptEnvelopedDataWithKeys(fromBase64(sealed), keys)));
 const END = new Date("2099-06-01T14:00:00.000Z");
+/** `value` sealed to `certificates` (base64 DER), as anyone holding the public certificate can. */
+const sealTo = async (value: unknown, certificates: string[]) =>
+    toBase64(await encryptForRecipients(new TextEncoder().encode(JSON.stringify(value)), certificates.map(fromBase64)));
 
 afterEach(() => {
     vi.clearAllMocks();
@@ -103,5 +106,40 @@ describe("bookingProtection", () => {
 
     it("picks only the booker-written fields a request sends for its mail", () => {
         expect(bookingContent({ bookerName: "Grace", bookerNotes: "", bookerPhone: "1", ...({ bookerEmail: "g@example.com" } as any) })).toEqual({ bookerName: "Grace", bookerPhone: "1" });
+        expect(bookingContent({ bookerName: { a: 1 } as any, bookerNotes: 7 as any, bookerPhone: "1" })).toEqual({ bookerPhone: "1" });
+    });
+
+    it("keeps a field a booker sealed as anything but text off the host's list and out of a change", async () => {
+        const host = await hostKey();
+        const sealedFields = {
+            bookerName: await sealTo({ a: 1 }, [host.certificate]),
+            bookerNotes: await sealTo(["x"], [host.certificate]),
+            bookerPhone: await sealTo("555-0100", [host.certificate]),
+            bookerLocationInstructions: await sealTo(null, [host.certificate]),
+        };
+        const listed: any = { uid: "b3", mailboxUid: "mb", protected: true, bookerName: "mallory@example.com", bookerEmail: "mallory@example.com", sealedFields };
+        getUnlockedKeys.mockReturnValue({ zeroAccessKeys: [host.unlocked] });
+
+        const shown = await openHostCopy(listed);
+        expect(shown.bookerName).toBe("mallory@example.com");
+        expect(shown.bookerPhone).toBe("555-0100");
+        expect("bookerNotes" in shown).toBe(false);
+        expect(shown.bookerLocationInstructions).toBeNull();
+        // Nothing to compose a change from.
+        expect(await openedHostCopy(listed)).toBeUndefined();
+
+        // The booker's own copy, likewise.
+        const key = await generateMeetingKey(new Date(Date.now() + 60_000));
+        const booking: any = {
+            uid: "b3",
+            meetingKeyCertificate: toBase64(key.certificateDer),
+            guestSealedFields: {
+                bookerName: await sealTo({ a: 1 }, [toBase64(key.certificateDer)]),
+                bookerNotes: await sealTo("Hi", [toBase64(key.certificateDer)]),
+                // Not a booker-written field: ignored.
+                bookerEmail: await sealTo("x@example.com", [toBase64(key.certificateDer)]),
+            },
+        };
+        expect(await openBookerCopy(booking, key.pkcs8)).toEqual({ bookerNotes: "Hi" });
     });
 });

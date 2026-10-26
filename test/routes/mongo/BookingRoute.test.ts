@@ -15,7 +15,7 @@ import * as uuid from "uuid";
 import { BookingMongo } from "../../../src/models/mongo/BookingMongo.js";
 import { BookingProfileMongo } from "../../../src/models/mongo/BookingProfileMongo.js";
 import { BookingTypeMongo } from "../../../src/models/mongo/BookingTypeMongo.js";
-import { CalendarEventMongo, FolderMongo, MailboxMongo, MessageMongo } from "@rapidmx/restapi/mongo";
+import { CalendarEventMongo, DomainMongo, FolderMongo, MailboxMongo, MessageMongo } from "@rapidmx/restapi/mongo";
 import { BusyStatus, CalendarEventStatus, FolderType, RecipientType, RecurrenceFrequency } from "@rapidmx/restapi";
 import { BookingLocationType, BookingStatus } from "../../../src/models/types.js";
 import { MongoMemoryServer } from "mongodb-memory-server";
@@ -60,6 +60,7 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
     const server: Server = new Server({ config, basePath: "./test/server-mongo", logger, objectFactory });
     const baseUrl = "/mongo/bookings";
     let mailboxRepo: MongoRepository<MailboxMongo>;
+    let domainRepo: MongoRepository<DomainMongo>;
     let folderRepo: MongoRepository<FolderMongo>;
     let bookingTypeRepo: MongoRepository<BookingTypeMongo>;
     let bookingRepo: MongoRepository<BookingMongo>;
@@ -164,6 +165,7 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
         conn = connMgr?.connections.get("mongo");
         if (conn instanceof MongoConnection) {
             mailboxRepo = conn.getMongoRepository("MailboxMongo");
+            domainRepo = conn.getMongoRepository("DomainMongo");
             folderRepo = conn.getMongoRepository("FolderMongo");
             bookingTypeRepo = conn.getMongoRepository("BookingTypeMongo");
             bookingRepo = conn.getMongoRepository("BookingMongo");
@@ -188,6 +190,7 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
     beforeEach(async () => {
         for (const repo of [
             mailboxRepo,
+            domainRepo,
             folderRepo,
             bookingTypeRepo,
             bookingRepo,
@@ -1551,6 +1554,25 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
             const job: any = await objectFactory.newInstance(BookingKeyExpiryJobMongo, { name: "booking-expiry-test" });
             job.batchSize = batchSize ?? 200;
             await job.run();
+        },
+        addDomain: async (name: string, aliasOf?: string) => {
+            await domainRepo.save(new DomainMongo({ uid: name, name, enabled: true, verified: true, verificationToken: uuid.v4(), ...(aliasOf ? { aliasOf } : {}) }));
+        },
+        addMailbox: async (address: string, options: { aliases?: string[]; zeroAccessMail?: boolean } = {}) => {
+            const local: any = new MailboxMongo({
+                ownerUserUid: uuid.v4(),
+                primarySmtpAddress: address,
+                aliasAddresses: options.aliases ?? [],
+                displayName: "Local booker",
+                timezone: "UTC",
+                quotaBytes: 1_000_000_000,
+                usedBytes: 0,
+            });
+            if (options.zeroAccessMail) {
+                local.zeroAccessKeys = [await testZeroAccessKey()];
+                local.zeroAccessTypes = { mail: true };
+            }
+            await mailboxRepo.save(local);
         },
         route: () => objectFactory.getInstance("routes.BookingRoute"),
         findVideoMeetings: async () => await videoMeetingRepo.find({}).toArray(),

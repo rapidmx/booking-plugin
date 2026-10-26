@@ -25,6 +25,38 @@ export interface BookingContent {
 
 const CONTENT_FIELDS = ["bookerName", "bookerNotes", "bookerPhone", "bookerLocationInstructions"] as const;
 
+/**
+ * Whether every booker-written field `booking` holds is text (or unset). What opens from a sealed field is whatever was sealed, and anyone
+ * can seal to the host's public certificate: the server checks only that a sealed value is a blob, so a booker can seal an object as their
+ * name. One must never reach the page (React refuses to render it, taking the host's list down with it) nor a request.
+ */
+function hasTextContent(booking: object): boolean {
+    return CONTENT_FIELDS.every((field) => {
+        const value: unknown = (booking as Record<string, unknown>)[field];
+        return value === undefined || value === null || typeof value === "string";
+    });
+}
+
+/** `booking` with each booker-written field that isn't text left out, the name falling back to the booker's address (the server's own
+ * placeholder for it). */
+function textContentOnly(booking: PublicBooking): PublicBooking {
+    if (hasTextContent(booking)) {
+        return booking;
+    }
+    const kept: Record<string, unknown> = { ...booking };
+    for (const field of CONTENT_FIELDS) {
+        const value: unknown = kept[field];
+        if (value !== undefined && value !== null && typeof value !== "string") {
+            if (field === "bookerName") {
+                kept.bookerName = booking.bookerEmail;
+            } else {
+                delete kept[field];
+            }
+        }
+    }
+    return kept as unknown as PublicBooking;
+}
+
 /** How long after its slot ends a booking's key is kept. */
 export const BOOKING_KEY_GRACE_MS = 60 * 60_000;
 
@@ -100,7 +132,11 @@ export async function openBookerCopy(booking: PublicBooking, pkcs8: Uint8Array):
         const content: BookingContent = {};
         for (const [field, sealed] of Object.entries(booking.guestSealedFields)) {
             if ((CONTENT_FIELDS as readonly string[]).includes(field)) {
-                content[field as keyof BookingContent] = JSON.parse(new TextDecoder().decode(await decryptEnvelopedDataWithKeys(fromBase64(sealed), [decryptionKey])));
+                const value: unknown = JSON.parse(new TextDecoder().decode(await decryptEnvelopedDataWithKeys(fromBase64(sealed), [decryptionKey])));
+                // Only text: whatever was sealed is what opens (`hasTextContent()`).
+                if (typeof value === "string") {
+                    content[field as keyof BookingContent] = value;
+                }
             }
         }
         return content;
@@ -109,18 +145,24 @@ export async function openBookerCopy(booking: PublicBooking, pkcs8: Uint8Array):
     }
 }
 
-/** `booking` (as the host lists it) with the host's copy opened, while the host's mailbox is unlocked - else as it is. */
-export async function openHostCopy(booking: PublicBooking): Promise<PublicBooking> {
+/** `booking` (as the host lists it) with the host's copy opened, while the host's mailbox is unlocked - else as it is. Unchecked. */
+async function openHostRecord(booking: PublicBooking): Promise<PublicBooking> {
     return booking.protected && booking.sealedFields ? await openSealedRecord(booking as PublicBooking & { mailboxUid: string }) : booking;
 }
 
+/** `booking` (as the host lists it) with the host's copy opened, while the host's mailbox is unlocked - else as it is. A field that
+ * opens to anything but text is left out (`textContentOnly()`). */
+export async function openHostCopy(booking: PublicBooking): Promise<PublicBooking> {
+    return textContentOnly(await openHostRecord(booking));
+}
+
 /** `booking` (a protected one, as the host lists it) with every field of the host's copy opened right now, or `undefined` when they
- * don't all open (the host's mailbox is locked, or it isn't its key). For a change whose mail and event are composed from what the
- * booker wrote: a copy listed while the mailbox was locked still holds the server's placeholders (the booker's address as their
- * name, nothing else), which must never be sent as what they wrote. */
+ * don't all open (the host's mailbox is locked, or it isn't its key) or one opens to anything but text. For a change whose mail and
+ * event are composed from what the booker wrote: a copy listed while the mailbox was locked still holds the server's placeholders (the
+ * booker's address as their name, nothing else), which must never be sent as what they wrote. */
 export async function openedHostCopy(booking: PublicBooking): Promise<PublicBooking | undefined> {
-    const opened = await openHostCopy(booking);
-    return isOpenedRecord(opened) ? opened : undefined;
+    const opened = await openHostRecord(booking);
+    return isOpenedRecord(opened) && hasTextContent(opened) ? opened : undefined;
 }
 
 /** `booking`'s link key, opened from the host's wrap while the host's mailbox is unlocked - for the mail a host change sends the booker. */
@@ -137,12 +179,13 @@ export async function hostLinkKey(booking: PublicBooking): Promise<string | unde
     }
 }
 
-/** `booking`'s booker-written fields, for a request that needs the plaintext for its mail. */
+/** `booking`'s booker-written fields, for a request that needs the plaintext for its mail. Text only. */
 export function bookingContent(booking: BookingContent): BookingContent {
     const content: BookingContent = {};
     for (const field of CONTENT_FIELDS) {
-        if (booking[field]) {
-            content[field] = booking[field];
+        const value: unknown = booking[field];
+        if (value && typeof value === "string") {
+            content[field] = value;
         }
     }
     return content;

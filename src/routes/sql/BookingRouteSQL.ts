@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
 import { RouteDecorators } from "@rapidrest/service-core";
-import { CalendarEventSQL, EncryptionPolicySQL, FolderSQL, MailboxSQL, MessageSQL , ZeroAccessIndexEntrySQL } from "@rapidmx/restapi/sql";
+import { Raw } from "typeorm";
+import { CalendarEventSQL, DomainSQL, EncryptionPolicySQL, FolderSQL, MailboxSQL, MessageSQL, ZeroAccessIndexEntrySQL } from "@rapidmx/restapi/sql";
 import { BookingSQL } from "../../models/sql/BookingSQL.js";
 import { BookingProfileSQL } from "../../models/sql/BookingProfileSQL.js";
 import { BookingTypeSQL } from "../../models/sql/BookingTypeSQL.js";
@@ -25,9 +26,18 @@ export class BookingRouteSQL extends BaseBookingRoute<BookingTypeSQL, BookingSQL
     protected calendarEventClass: any = CalendarEventSQL;
     protected encryptionPolicyClass: any = EncryptionPolicySQL;
     protected zeroAccessIndexEntryClass: any = ZeroAccessIndexEntrySQL;
+    protected domainClass: any = DomainSQL;
     protected folderClass: any = FolderSQL;
     protected mailboxClass: any = MailboxSQL;
     protected messageClass: any = MessageSQL;
+
+    /** `aliasAddresses` is stored as a serialized `simple-json` column on the SQL backend, so a plain equality filter compares against
+     * the whole serialized string and never matches one element: a `LIKE` on the element's quoted form instead, `%` and `_` escaped
+     * with `!` (a backslash escape isn't valid on MySQL), as restapi's `CalendarEventRouteSQL.aliasQueryValue()` does. */
+    protected aliasQueryValue(address: string): any {
+        const escaped: string = address.replace(/[!%_]/g, (ch) => `!${ch}`);
+        return Raw((alias) => `${alias} LIKE :pattern ESCAPE '!'`, { pattern: `%"${escaped}"%` });
+    }
 
     /**
      * This backend's half of `BaseBookingRoute.importVideoconfBackend()`: a dynamic `import()` of

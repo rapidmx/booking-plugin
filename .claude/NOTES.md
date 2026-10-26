@@ -579,3 +579,24 @@ Fixed (findings by review id):
 
 Meet-plugin's same-day changes (kick eviction, nonce layout, waiting room) need nothing here; the node_modules copy was refreshed to
 build and test against them.
+
+## 2026-10-25: Fourth review fixes
+
+Fixed (findings by review id):
+
+- **#327 A protected booking's key mailed to a booker mailbox here that stores mail readable.** `sendBookingMail()` now asks
+  `mayCarryBookingKey(bookerEmail)` before adding `#k=` to the manage link and a minted video link (body and ICS). It mirrors restapi
+  `BaseCalendarEventRoute.mayCarryMeetingKey()` / `MeetingInviteSender`: yes for an address on another server; for a mailbox here
+  (by primary address or alias, plus tag stripped, alias domain rewritten) only when `ZeroAccessWriter.target(mailbox, "mail")` says its
+  mail is zero-access; no for any other address of a verified domain (list, unknown). Otherwise both links go out bare and a warning
+  names the booking (never the key). Applies to book, reschedule and the host's video-link change. The routes gained `domainClass`
+  (`DomainSQL`/`DomainMongo`, built into a `DomainUtils`) and `aliasQueryValue()` (Mongo literal; `BookingRouteSQL` overrides it with a
+  `!`-escaped `LIKE` on the `simple-json` column via typeorm `Raw`, as autodiscover already does). The test servers register the Domain
+  models. Spec: meet-plugin `specs/meeting_privacy.md` §6.2. The confirmation page still shows the keyed links (from the response, never
+  stored), so a local booker keeps them there.
+- **#329 A booker sealing a non-string field breaking the host's booking-type page.** `apps/shared/bookingProtection.ts` keeps an opened
+  booker field only when it is text: `openHostCopy()` replaces a non-text name with the booker's address and drops any other non-text
+  field; `openedHostCopy()` returns `undefined` for such a copy (so a video-link change is refused as for a copy that won't open);
+  `openBookerCopy()` skips non-text fields; `bookingContent()` copies strings only. The server still can't see inside a sealed value.
+
+meet-plugin's node_modules copy was refreshed for its #324/#325 changes (RelayFrameKind, held evictions); nothing here uses them.

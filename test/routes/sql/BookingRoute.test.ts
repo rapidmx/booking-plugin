@@ -21,7 +21,7 @@ import { Repository } from "typeorm";
 import { BookingSQL } from "../../../src/models/sql/BookingSQL.js";
 import { BookingProfileSQL } from "../../../src/models/sql/BookingProfileSQL.js";
 import { BookingTypeSQL } from "../../../src/models/sql/BookingTypeSQL.js";
-import { CalendarEventSQL, FolderSQL, MailboxSQL, MessageSQL } from "@rapidmx/restapi/sql";
+import { CalendarEventSQL, DomainSQL, FolderSQL, MailboxSQL, MessageSQL } from "@rapidmx/restapi/sql";
 import { BusyStatus, CalendarEventStatus, FolderType, RecipientType, RecurrenceFrequency } from "@rapidmx/restapi";
 import { BookingLocationType, BookingStatus } from "../../../src/models/types.js";
 import { VideoMeetingSQL, VideoMeetingInviteeSQL } from "@rapidmx/meet-plugin/sql";
@@ -58,6 +58,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
     const server: Server = new Server({ config, basePath: "./test/server-sql", logger, objectFactory });
     const baseUrl = "/sql/bookings";
     let mailboxRepo: Repository<MailboxSQL>;
+    let domainRepo: Repository<DomainSQL>;
     let folderRepo: Repository<FolderSQL>;
     let bookingTypeRepo: Repository<BookingTypeSQL>;
     let bookingRepo: Repository<BookingSQL>;
@@ -163,6 +164,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         conn = connMgr?.connections.get("sql");
         if (isSqlDataSource(conn)) {
             mailboxRepo = conn.getRepository(MailboxSQL);
+            domainRepo = conn.getRepository(DomainSQL);
             folderRepo = conn.getRepository(FolderSQL);
             bookingTypeRepo = conn.getRepository(BookingTypeSQL);
             bookingRepo = conn.getRepository(BookingSQL);
@@ -195,6 +197,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             bookingProfileRepo,
             folderRepo,
             mailboxRepo,
+            domainRepo,
         ]) {
             await repo.clear();
         }
@@ -1544,6 +1547,25 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             const job: any = await objectFactory.newInstance(BookingKeyExpiryJobSQL, { name: "booking-expiry-test" });
             job.batchSize = batchSize ?? 200;
             await job.run();
+        },
+        addDomain: async (name: string, aliasOf?: string) => {
+            await domainRepo.save(new DomainSQL({ uid: name, name, enabled: true, verified: true, verificationToken: uuid.v4(), ...(aliasOf ? { aliasOf } : {}) }));
+        },
+        addMailbox: async (address: string, options: { aliases?: string[]; zeroAccessMail?: boolean } = {}) => {
+            const local: any = new MailboxSQL({
+                ownerUserUid: uuid.v4(),
+                primarySmtpAddress: address,
+                aliasAddresses: options.aliases ?? [],
+                displayName: "Local booker",
+                timezone: "UTC",
+                quotaBytes: 1_000_000_000,
+                usedBytes: 0,
+            });
+            if (options.zeroAccessMail) {
+                local.zeroAccessKeys = [await testZeroAccessKey()];
+                local.zeroAccessTypes = { mail: true };
+            }
+            await mailboxRepo.save(local);
         },
         route: () => objectFactory.getInstance("routes.BookingRoute"),
         findVideoMeetings: async () => await videoMeetingRepo.find(),

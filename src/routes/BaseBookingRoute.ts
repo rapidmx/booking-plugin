@@ -26,12 +26,14 @@ import {
     BusyStatus,
     CalendarEvent,
     CalendarEventStatus,
+    DomainUtils,
     Folder,
     FolderType,
     Mailbox,
     MessageImportance,
     PluginRegistry,
     RecipientType,
+    addressDomainOf,
     asEntity,
     buildEventIcs,
     coerceCalendarEventDates,
@@ -47,6 +49,7 @@ import {
     rateLimitKeyForIp,
     resolveClientIp,
     safeDisplayName,
+    stripPlusTag,
     type BlobStore,
     type MailTransport,
     type OccurrenceWindow,
@@ -353,6 +356,10 @@ export abstract class BaseBookingRoute<
      * when zero-access covers the host's mail (restapi `specs/search.md` §3, *Every Write, Not Just Delivery*). */
     protected zeroAccessIndexEntryClass?: any;
     private zeroAccessWriter?: ZeroAccessWriter;
+    /** The backend's `Domain` model: which addresses are this server's, for whether a booker's mail may carry the booking's key
+     * (`mayCarryBookingKey()`). */
+    protected domainClass?: any;
+    private domainUtils?: DomainUtils;
 
     // Automatically injected by ObjectFactory on instantiation
     private _objectFactory?: ObjectFactory;
@@ -434,6 +441,10 @@ export abstract class BaseBookingRoute<
         }
         if (!this.mailboxRepo && this.mailboxClass) {
             this.mailboxRepo = await this._objectFactory.newInstance(RepoUtils, { name: this.mailboxClass.name, args: [this.mailboxClass] });
+        }
+        if (!this.domainUtils && this.domainClass) {
+            const domainRepo: RepoUtils<any> = await this._objectFactory.newInstance(RepoUtils, { name: this.domainClass.name, args: [this.domainClass] });
+            this.domainUtils = await this._objectFactory.newInstance(DomainUtils, { name: this.domainClass.name, args: [domainRepo] });
         }
         this.recordSealer ??= await newZeroAccessRecordSealer(this._objectFactory, this.encryptionPolicyClass);
         this.zeroAccessWriter ??= await newZeroAccessWriter(this._objectFactory, this.encryptionPolicyClass, this.zeroAccessIndexEntryClass);
@@ -1006,12 +1017,49 @@ export abstract class BaseBookingRoute<
         return booking.keyProtected && content ? ({ ...booking, ...content }) : booking;
     }
 
-    /** `linkKey`: a protected booking's link key, which the mailed manage link and a protected video link carry after `#`. */
+    /**
+     * Whether mail to `address` may carry a protected booking's key (meet-plugin `specs/meeting_privacy.md` §4.1, which the server must
+     * never store), by restapi `BaseCalendarEventRoute.mayCarryMeetingKey()`'s rule: yes for an address elsewhere, whose copy leaves this
+     * server; for one of this server's mailboxes only when its mail is stored zero-access encrypted, since its copy - the message and the
+     * event filed from it - is stored here. An address of this server's domains that isn't a mailbox (a list, an unknown one) can't be
+     * told, so it is a no.
+     */
+    private async mayCarryBookingKey(address: string): Promise<boolean> {
+        const domains: string[] = this.domainUtils ? (await this.domainUtils.getVerifiedDomainNames()).map((name) => name.toLowerCase()) : [];
+        for (const candidate of new Set([address, stripPlusTag(address)])) {
+            const rewritten: string | undefined = await this.domainUtils?.resolveDomainAlias(candidate);
+            for (const exact of rewritten ? [candidate, rewritten] : [candidate]) {
+                const found: M | undefined =
+                    (await this.mailboxRepo!.find({ primarySmtpAddress: ModelUtils.literal(exact) } as any, { ignoreACL: true, limit: 1 }))[0] ??
+                    (await this.mailboxRepo!.find({ aliasAddresses: this.aliasQueryValue(exact) } as any, { ignoreACL: true, limit: 1 }))[0];
+                if (found) {
+                    return !!(await this.zeroAccessWriter?.target(found, "mail"));
+                }
+            }
+        }
+        return !domains.includes(addressDomainOf(address) ?? "");
+    }
+
+    /** The query value matching one element of `Mailbox.aliasAddresses`: an exact match of an array element on Mongo. `BookingRouteSQL`
+     * overrides it for the SQL backend's serialized `simple-json` column. */
+    protected aliasQueryValue(address: string): any {
+        return ModelUtils.literal(address);
+    }
+
+    /** `linkKey`: a protected booking's link key, which the mailed manage link and a protected video link carry after `#` - only when
+     * the booker's copy won't be stored readable here (`mayCarryBookingKey()`). Otherwise both go out without it, as on the manage
+     * page opened without its key, and the booker keeps the keyed links the confirmation page showed. */
     private async sendBookingMail(bookingType: BT, shown: B, event: CE, mailbox: M, cancelled: boolean, linkKey?: string): Promise<void> {
-        const key: string | undefined = shown.keyProtected ? linkKey : undefined;
-        const booking: B =
-            key && shown.videoLinkKeyed && shown.locationVideoUrl ? ({ ...shown, locationVideoUrl: withLinkKey(shown.locationVideoUrl, key) }) : shown;
         try {
+            let key: string | undefined = shown.keyProtected ? linkKey : undefined;
+            if (key && !(await this.mayCarryBookingKey(shown.bookerEmail))) {
+                key = undefined;
+                this.logger?.warn(
+                    `BookingRoute: mailing booking ${shown.uid}'s links without their key, since its booker's mail would be stored readable here.`,
+                );
+            }
+            const booking: B =
+                key && shown.videoLinkKeyed && shown.locationVideoUrl ? ({ ...shown, locationVideoUrl: withLinkKey(shown.locationVideoUrl, key) }) : shown;
             const plainManageUrl: string | undefined = this.manageUrl(booking);
             const manageUrl: string | undefined = plainManageUrl && withLinkKey(plainManageUrl, key);
             // `hostDisplayName` is the host's own input: an address-like (or multi-line) one is left out of the From and the
@@ -1056,7 +1104,7 @@ export abstract class BaseBookingRoute<
                 envelopeTo: [booking.bookerEmail],
             });
         } catch (err: any) {
-            this.logger?.warn(`BookingRoute: failed to send booking mail for ${booking.uid}: ${err.message}`);
+            this.logger?.warn(`BookingRoute: failed to send booking mail for ${shown.uid}: ${err.message}`);
         }
     }
 

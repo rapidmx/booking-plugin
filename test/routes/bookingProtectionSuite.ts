@@ -30,6 +30,10 @@ export interface BookingProtectionSuiteContext {
     /** The booking route instance. */
     route: () => any;
     findVideoMeetings: () => Promise<any[]>;
+    /** Makes `name` one of this server's (verified, enabled) domains, an alias of `aliasOf` when given. */
+    addDomain: (name: string, aliasOf?: string) => Promise<void>;
+    /** Adds a mailbox at `address` on this server, its mail zero-access encrypted with `zeroAccessMail`. */
+    addMailbox: (address: string, options?: { aliases?: string[]; zeroAccessMail?: boolean }) => Promise<void>;
 }
 
 export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void {
@@ -86,6 +90,75 @@ export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void
             expect(raw).toContain("SUMMARY:Intro Call with Grace Hopper");
             expect(result.body).toMatchObject({ protected: true, bookerName: "grace@example.com", guestSealedFields: booking.guestSealedFields });
             expect(result.body.sealedFields).toBeUndefined();
+        });
+
+        it("Mails the key only to a booker whose copy leaves this server or is stored here zero-access encrypted", async () => {
+            const key = await ctx.protectHost();
+            await ctx.addDomain("corp.example");
+            await ctx.addDomain("corp-alias.example", "corp.example");
+            await ctx.addMailbox("alice@corp.example");
+            await ctx.addMailbox("bob@corp.example", { zeroAccessMail: true });
+            await ctx.addMailbox("carol@corp.example", { aliases: ["carol.alias@corp.example"], zeroAccessMail: true });
+            await ctx.addMailbox("dave@corp.example", { aliases: ["dave.alias@corp.example"] });
+            await ctx.addMailbox("frank@corp.example", { aliases: ["frankxb@corp.example", "frank_c@corp.example"], zeroAccessMail: true });
+            const warn = vi.spyOn(ctx.route().logger, "warn");
+            const cases: [string, boolean][] = [
+                // A mailbox here whose mail is stored readable, by its address, an alias, or a plus tag.
+                ["alice@corp.example", false],
+                ["alice+booking@corp.example", false],
+                ["dave.alias@corp.example", false],
+                // Another address of a domain this server serves: a list or an unknown address can't be told.
+                ["team@corp.example", false],
+                ["alice@corp-alias.example", false],
+                // A `_` in the address matches only itself, never another alias's character.
+                ["frank_b@corp.example", false],
+                // A mailbox here whose mail is zero-access, by its address, an alias, a plus tag or an alias domain.
+                ["bob@corp.example", true],
+                ["bob+booking@corp.example", true],
+                ["carol.alias@corp.example", true],
+                ["frank_c@corp.example", true],
+                ["bob@corp-alias.example", true],
+                // An address on another server.
+                ["grace@example.com", true],
+            ];
+            try {
+                for (const [index, [bookerEmail, keyed]] of cases.entries()) {
+                    ctx.clearSentMail();
+                    const bookingType = await ctx.createBookingType();
+                    // A day each, as every booking lands on the same host calendar.
+                    const day = `2099-06-${String(index + 1).padStart(2, "0")}`;
+                    const result = await book(bookingType.slug, {
+                        ...ctx.validBooking(`${day}T13:00:00.000Z`),
+                        bookerEmail,
+                        protection: bookingProtection(ctx.mailboxUid(), key.fingerprint, `${day}T14:00:00.000Z`),
+                    });
+                    expect(result.status, JSON.stringify(result.body)).toBe(200);
+                    const [sent] = ctx.sentMail();
+                    expect(sent.envelopeTo, bookerEmail).toEqual([bookerEmail]);
+                    const raw = await decoded(sent.raw);
+                    expect(raw, bookerEmail).toContain(`/manage/${result.body.manageToken}`);
+                    expect(raw.includes(LINK_KEY), bookerEmail).toBe(keyed);
+                }
+                expect(warn).toHaveBeenCalledWith(expect.stringContaining("links without their key"));
+                expect(JSON.stringify(warn.mock.calls)).not.toContain(LINK_KEY);
+            } finally {
+                warn.mockRestore();
+            }
+        });
+
+        it("Mails a reschedule to a booker whose mail is stored readable here without the key", async () => {
+            const key = await ctx.protectHost();
+            await ctx.addDomain("corp.example");
+            await ctx.addMailbox("alice@corp.example");
+            const { result } = await bookProtected(key.fingerprint, { bookerEmail: "alice@corp.example" });
+            ctx.clearSentMail();
+            const moved = await request(ctx.app())
+                .post(`${ctx.baseUrl}/manage/${result.body.manageToken}/reschedule`)
+                .send({ start: "2099-06-01T14:00:00.000Z", content: { bookerName: "Alice" }, linkKey: LINK_KEY });
+            expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+            const raw = await decoded(ctx.sentMail()[0].raw);
+            expect(raw).toContain(`/manage/${result.body.manageToken}`);
+            expect(raw).not.toContain(LINK_KEY);
         });
 
         it("Leaves what the booker wrote out of a host notification that isn't filed sealed, and says where to read it", async () => {
@@ -258,7 +331,7 @@ export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void
                 const start = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate() + days, 12));
                 return { start: start.toISOString(), end: new Date(start.getTime() + 3_600_000).toISOString() };
             };
-            const bookVideo = async () => {
+            const bookVideo = async (bookerEmail?: string, days: number = 2) => {
                 PluginRegistry.setLoaded([{ name: VIDEOCONF_PLUGIN_NAME, version: "0.1.0" }]);
                 const key = await ctx.protectHost();
                 const bookingType = await ctx.createBookingType({
@@ -266,8 +339,12 @@ export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void
                     availability: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({ dayOfWeek, startMinute: 0, endMinute: 1440 })),
                     meetingTypes: [{ uid: "mt-default", name: "Intro Call", durationMinutes: 60, locationOptions: [{ uid: "lo-default", type: "video" }] }],
                 });
-                const slot = slotIn(2);
-                const result = await book(bookingType.slug, { ...ctx.validBooking(slot.start), protection: bookingProtection(ctx.mailboxUid(), key.fingerprint, slot.end) });
+                const slot = slotIn(days);
+                const result = await book(bookingType.slug, {
+                    ...ctx.validBooking(slot.start),
+                    ...(bookerEmail ? { bookerEmail } : {}),
+                    protection: bookingProtection(ctx.mailboxUid(), key.fingerprint, slot.end),
+                });
                 expect(result.status, JSON.stringify(result.body)).toBe(200);
                 return { result, slot };
             };
@@ -288,6 +365,22 @@ export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void
                 const [booking] = await ctx.findBookings();
                 const listed = await host().get(`${ctx.baseUrl}/host?bookingTypeUid=${booking.bookingTypeUid}`);
                 expect(listed.body[0].videoLinkKeyed).toBeUndefined();
+            });
+
+            it("Mails the keyed video link to a booker elsewhere, and leaves the key off it for a booker whose mail is stored readable here", async () => {
+                const { result } = await bookVideo();
+                const elsewhere = await decoded(ctx.sentMail()[0].raw);
+                expect(elsewhere).toContain(`${result.body.locationVideoUrl}#${LINK_KEY}`);
+
+                await ctx.addDomain("corp.example");
+                await ctx.addMailbox("alice@corp.example");
+                ctx.clearSentMail();
+                const local = await bookVideo("alice@corp.example", 3);
+                const raw = await decoded(ctx.sentMail()[0].raw);
+                expect(raw).toContain(local.result.body.locationVideoUrl);
+                expect(raw).not.toContain(LINK_KEY);
+                // The confirmation page still shows the keyed link.
+                expect(local.result.body.videoLinkKeyed).toBe(true);
             });
 
             it("Moves the meeting's key expiry with the booking's when it is rescheduled", async () => {
