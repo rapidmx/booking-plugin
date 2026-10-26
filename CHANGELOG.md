@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-26
+
+### Changed
+- Seal a booking's calendar event when zero-access encryption protects the host's calendar
+- Compose the booker's invitation from the booking when the event holds only placeholders
+- File the host's booking notification sealed when zero-access encryption covers the host's mail
+- Protect a booking while zero-access covers the host's calendar, storing what the booker writes only sealed for the host and the booker
+- Give the booking page the host's zero-access certificate, and refuse an unprotected booking of a protected host
+- Mail a protected booking's confirmation, reschedule and new video link from plaintext the request carries, with the key in its links
+- Leave what the booker wrote out of a host notification that isn't filed sealed
+- Discard a protected booking's booker copy and key once it is over with BookingKeyExpiryJob
+- Seal a booking on the booking page, and open it on the manage page with its link's key and in the host's list with the host's key
+- Move a rescheduled protected booking's key expiry, and its minted video meeting's through meet-plugin's extendSingleInviteeMeetingKey, to the new slot's end plus the grace hour
+- Take expired protected bookings soonest first in BookingKeyExpiryJob, so bookings far ahead can't keep them out of the batch
+- Refuse a protected booking's video link change without the booker's plaintext, and keep the link keyed when it is saved again unchanged
+- File a new booking's sealed host notification with what the booker wrote
+- Show a protected meeting's video link with the booking's key on the confirmation and manage pages
+- Inline @rapidmx/meet-plugin in the test build, so its integration functions share the test servers' service-core
+- Refuse to reschedule a protected booking without the booker's plaintext, so its new invitation is never built from the stored placeholders, and disable Reschedule on a manage page missing its key
+- Send the saved video URL again when the host saves an untouched field, instead of clearing it
+- Open a protected booking's host copy again when the host saves its video link, refusing while it doesn't open, so a list loaded while locked never sends placeholders as what the booker wrote
+- Mail a protected booking's manage and video links with their key only to a booker on another server or at a mailbox here whose mail is zero-access, sending them without it to any other address of this server's domains, as restapi's meeting invitations do
+- Keep an opened booker field on the host's list and the manage page only when it is text, so a booker sealing an object as their name can't break the host's booking-type page, and refuse a video-link change composed from such a copy
+- Send a protected booking's video-link change only when the unwrapped key is its certificate's, has signed the booker's address, and opens a booker copy matching the host copy, so a booker can't have the host's client mail them ciphertext it opens
+- Sign the booker's address with the booking key on the booking page, require and store that keyBinding, discard it at key expiry, and give the host the booker's copy, the certificate and the binding to check against
+- Never hand meet-plugin a protected booker's name, and mint a protected booking's video meeting only through a meet-plugin exporting SINGLE_INVITEE_MEETING_PROTECTION, leaving the link to the host otherwise
+- Force the fixed versions of the dependencies the audit flags through resolutions, and ignore only node-forge's unfixed advisory 1240912 until acme-client or node-forge ships a fix
+- Pass restapi's freshMessageUid to the host notification's sealRaw(), whose uid is minted for that one filing, so a seal that fails writing its index entry removes the sealed blob it stored instead of leaving it with nothing naming it
+- Ask for a headers-only bounce of a booker's mail carrying the link key, and through a transport that can't, mail the key only while the host's mail would seal the bounce
+- Describe this release's changes in the release notes
+- Publish only from a release tag's own Build, and only once every Build of that commit has finished green
+- Build against @rapidmx/restapi ^0.35.0, @rapidmx/web-client ^0.37.0 and @rapidmx/meet-plugin ^0.18.0
+- Require @rapidmx/restapi >=0.35.0 and @rapidmx/web-client >=0.37.0 as peers
+- Accept @rapidmx/meet-plugin >=0.18.0 <1 as the optional dependency, which ^0.5.0 limited to 0.5.x
+- Raise the @rapidmx/restapi and @rapidmx/web-client resolutions to ^0.35.0 and ^0.37.0, which silently held them at 0.23.x and 0.31.x
+
+### Removed
+- Removed the redundant PublicBooking cast in openHostRecord() that fails lint's no-unnecessary-type-assertion, since PublicBooking already carries mailboxUid
+
 ## [0.13.0] - 2026-10-24
 
 ### Changed
@@ -196,7 +235,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed the booking pages drawing the deployment logo a second time under the branding header, and pushing the branding footer off screen
 
-[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/rapidmx/booking-plugin/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/rapidmx/booking-plugin/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/rapidmx/booking-plugin/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/rapidmx/booking-plugin/compare/v0.10.2...v0.11.0

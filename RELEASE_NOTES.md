@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.14.0
+
 ### Added
 
 - **Protected bookings for hosts whose calendar is zero-access encrypted.** When zero-access encryption covers the host's calendar (restapi 0.35's per-type switch, "What to protect" in the web client's encryption settings), the booking page encrypts what the booker writes before it is sent: their name, phone number, notes and other answers are sealed in the booker's browser, once for the host's zero-access key and once for a temporary key belonging to the booking. The server stores only placeholders (the booker's email address as their name, every other field empty), so administrators, storage and backups can't read the booking. The booker's manage link and a minted video link carry the booking key after `#k=`, so the confirmation and manage pages open the booking in the browser; the host sees it in Booking Links once their mailbox is unlocked. The booking page receives the host's zero-access certificate with the booking type, and a protected host refuses an unprotected booking (400 "This booking page is out of date - reload it to book."), so a booking page opened before the host's calendar became protected must be reloaded. Mail to the booker (confirmation, reschedule, new video link) is composed from what the request carries, never from the stored placeholders.
