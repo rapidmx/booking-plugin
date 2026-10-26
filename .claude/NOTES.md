@@ -634,3 +634,8 @@ Fixed (findings by review id):
 Left: the `optionalDependencies` range for `@rapidmx/meet-plugin` stays `^0.5.0`. The first release carrying the flag isn't published
 yet, and the runtime check covers an older install; raise it when meet-plugin is released. meet-plugin's node_modules copy was refreshed
 for the flag.
+
+## 2026-10-26: Dependency audit
+- **Why.** CI's `validate` job (`validate.sh`: `yarn npm audit -R --severity high --no-deprecations`, production then development) failed on high/critical advisories in transitive dependencies.
+- **Fixed by `resolutions`** in `package.json` (descriptor-scoped, same style as the existing ones; drop each once the parent's own range picks up the fixed version): follow-redirects ^1.16.2, source-map-js ^1.2.2, handlebars ^4.7.10, undici ^8.x -> ^8.12.3, dompurify ^3.4.15 -> ^3.4.17 (GHSA-cg2g-xh64-v4q7 critical, 1242881; via @rapidmx/web-client - web-client itself still needs its own bump), `vite` ^8.3.5. Dev-only here.
+- **node-forge exception.** `.yarnrc.yml` `npmAuditIgnoreAdvisories: ["1240912"]` ignores only GHSA-86w9-cpqp-85rv (npm advisory id 1240912; node-forge <=1.4.0 RSA PKCS#1 v1.5 signature verification accepting extra nested DigestAlgorithm elements), which has no fixed node-forge release; it comes in through `acme-client` 5.4.0 (`^1.3.1`). Every other node-forge advisory still fails the audit. **Remove the exception once acme-client or node-forge ships a fix** (then add a resolution or bump acme-client instead).
