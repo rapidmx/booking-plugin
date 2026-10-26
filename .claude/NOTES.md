@@ -635,6 +635,23 @@ Left: the `optionalDependencies` range for `@rapidmx/meet-plugin` stays `^0.5.0`
 yet, and the runtime check covers an older install; raise it when meet-plugin is released. meet-plugin's node_modules copy was refreshed
 for the flag.
 
+## 2026-10-26: Review round 7 fixes (cross-repo follow-ups of restapi 701, 705)
+- **Host notification's sealed blob left behind (restapi 701).** `fileHostNotification`'s `sealRaw()` uses a `crypto.randomUUID()` uid
+  it never retries under, but passed no option, so a seal that failed after storing `za/<mbx>/<uid>` (index-entry create failing, with
+  no entry behind it) left that blob with nothing naming it (`stored` was still false, so the catch deleted nothing). Now passes
+  `{ freshMessageUid: true }` (restapi 979678f), and restapi's `seal()` removes the blob it stored. Reproduced first: the new test
+  "Removes a sealed notification's blob when sealing fails writing its index entry" (both backends) failed with the za/ key left.
+- **Booker mail bounces carried the link key (restapi 705's twin).** `sendBookingMail()` mails the keyed manage link (and keyed
+  video link) from the host's own address, so a bounce returning the whole message (a mistyped booker) stored the key in the host's
+  mailbox, readable unless the host's mail is sealed. A keyed mail now asks for a headers-only bounce (`dsnReturn: "headers"`), as
+  restapi's `MeetingInviteSender` does; through a transport without `headersOnlyDsn` (SES) the key is left off unless
+  `mayCarryBookingKey(host primarySmtpAddress)` (host's mail sealed), with a warning. Cancellations carry no key and ask for nothing.
+  Same residual as restapi: a non-DSN remote that bounces later decides what it returns. `RecordingMailTransport` reports
+  `headersOnlyDsn` (settable). Tests (suite, both backends): headers-only bounce on the keyed mail and none on an unkeyed one; with
+  `headersOnlyDsn` false, no key while the host's mail is readable, key and `dsnReturn` once it is sealed.
+- Needs restapi with 979678f (`freshMessageUid`, `dsnReturn`, `headersOnlyDsn`): CI against the published 0.34.0 fails to compile
+  until the next restapi release.
+
 ## 2026-10-26: Dependency audit
 - **Why.** CI's `validate` job (`validate.sh`: `yarn npm audit -R --severity high --no-deprecations`, production then development) failed on high/critical advisories in transitive dependencies.
 - **Fixed by `resolutions`** in `package.json` (descriptor-scoped, same style as the existing ones; drop each once the parent's own range picks up the fixed version): follow-redirects ^1.16.2, source-map-js ^1.2.2, handlebars ^4.7.10, undici ^8.x -> ^8.12.3, dompurify ^3.4.15 -> ^3.4.17 (GHSA-cg2g-xh64-v4q7 critical, 1242881; via @rapidmx/web-client - web-client itself still needs its own bump), `vite` ^8.3.5. Dev-only here.

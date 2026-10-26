@@ -22,7 +22,7 @@ export interface BookingProtectionSuiteContext {
     findEvents: () => Promise<any[]>;
     findMessages: () => Promise<any[]>;
     blobText: (key: string) => Promise<string>;
-    sentMail: () => { raw: Buffer; envelopeTo: string[] }[];
+    sentMail: () => { raw: Buffer; envelopeTo: string[]; dsnReturn?: string }[];
     clearSentMail: () => void;
     setKeyExpiresAt: (uid: string, at: Date) => Promise<void>;
     /** Runs `BookingKeyExpiryJob` once, looking at `batchSize` bookings at most when given. */
@@ -143,6 +143,56 @@ export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void
                 expect(warn).toHaveBeenCalledWith(expect.stringContaining("links without their key"));
                 expect(JSON.stringify(warn.mock.calls)).not.toContain(LINK_KEY);
             } finally {
+                warn.mockRestore();
+            }
+        });
+
+        it("Asks for a headers-only bounce of a mail carrying the key, so a bounce never brings it back to the host's mailbox", async () => {
+            // A mail without the key (the host has no zero-access key yet) asks for nothing.
+            const plain = await ctx.createBookingType();
+            const unkeyed = await book(plain.slug, ctx.validBooking("2099-06-02T13:00:00.000Z"));
+            expect(unkeyed.status, JSON.stringify(unkeyed.body)).toBe(200);
+            expect(ctx.sentMail()).toHaveLength(1);
+            expect(ctx.sentMail()[0].dsnReturn).toBeUndefined();
+
+            ctx.clearSentMail();
+            const key = await ctx.protectHost();
+            const { result } = await bookProtected(key.fingerprint);
+            const [keyed] = ctx.sentMail();
+            expect(await decoded(keyed.raw)).toContain(`/manage/${result.body.manageToken}#${LINK_KEY}`);
+            expect(keyed.dsnReturn).toBe("headers");
+        });
+
+        it("Through a transport that can't ask for a headers-only bounce, mails the key only while the host's mail is sealed", async () => {
+            const transport: any = ctx.route().mailTransport;
+            const warn = vi.spyOn(ctx.route().logger, "warn");
+            transport.headersOnlyDsn = false;
+            try {
+                // The host's mail is stored readable: a bounce of the mail would store the key there.
+                const key = await ctx.protectHost({ calendar: true, mail: false });
+                const { result } = await bookProtected(key.fingerprint);
+                const [unkeyed] = ctx.sentMail();
+                const raw = await decoded(unkeyed.raw);
+                expect(raw).toContain(`/manage/${result.body.manageToken}`);
+                expect(raw).not.toContain(LINK_KEY);
+                expect(unkeyed.dsnReturn).toBeUndefined();
+                expect(warn).toHaveBeenCalledWith(expect.stringContaining("a bounce of it would be stored readable in the host's mailbox"));
+                expect(JSON.stringify(warn.mock.calls)).not.toContain(LINK_KEY);
+
+                // Once the host's mail is sealed, a bounce of it would be too.
+                ctx.clearSentMail();
+                const sealedKey = await ctx.protectHost({ calendar: true, mail: true });
+                const bookingType = await ctx.createBookingType();
+                const again = await book(bookingType.slug, {
+                    ...ctx.validBooking("2099-06-02T13:00:00.000Z"),
+                    protection: bookingProtection(ctx.mailboxUid(), sealedKey.fingerprint, "2099-06-02T14:00:00.000Z"),
+                });
+                expect(again.status, JSON.stringify(again.body)).toBe(200);
+                const [keyed] = ctx.sentMail();
+                expect(await decoded(keyed.raw)).toContain(`/manage/${again.body.manageToken}#${LINK_KEY}`);
+                expect(keyed.dsnReturn).toBe("headers");
+            } finally {
+                transport.headersOnlyDsn = true;
                 warn.mockRestore();
             }
         });

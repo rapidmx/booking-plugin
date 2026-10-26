@@ -1082,7 +1082,8 @@ export abstract class BaseBookingRoute<
 
     /** `linkKey`: a protected booking's link key, which the mailed manage link and a protected video link carry after `#` - only when
      * the booker's copy won't be stored readable here (`mayCarryBookingKey()`). Otherwise both go out without it, as on the manage
-     * page opened without its key, and the booker keeps the keyed links the confirmation page showed. */
+     * page opened without its key, and the booker keeps the keyed links the confirmation page showed. A keyed mail asks for a
+     * headers-only bounce; through a transport that can't, it carries the key only while the host's mail is sealed. */
     private async sendBookingMail(bookingType: BT, shown: B, event: CE, mailbox: M, cancelled: boolean, linkKey?: string): Promise<void> {
         try {
             let key: string | undefined = shown.keyProtected ? linkKey : undefined;
@@ -1090,6 +1091,16 @@ export abstract class BaseBookingRoute<
                 key = undefined;
                 this.logger?.warn(
                     `BookingRoute: mailing booking ${shown.uid}'s links without their key, since its booker's mail would be stored readable here.`,
+                );
+            }
+            // The mail goes out from the host's own address, so a bounce that returns the whole message (a mistyped or refused booker)
+            // would bring the key back to the host's mailbox, readable unless the host's mail is sealed. A keyed mail asks for a
+            // headers-only bounce (`dsnReturn`), as restapi's `MeetingInviteSender` does for a keyed invitation; through a transport that
+            // can't ask (`headersOnlyDsn`), it carries the key only when the host's own copy of a bounce may (`mayCarryBookingKey()`).
+            if (key && this.mailTransport!.headersOnlyDsn !== true && !(await this.mayCarryBookingKey(mailbox.primarySmtpAddress))) {
+                key = undefined;
+                this.logger?.warn(
+                    `BookingRoute: mailing booking ${shown.uid}'s links without their key, since a bounce of it would be stored readable in the host's mailbox.`,
                 );
             }
             const booking: B =
@@ -1136,6 +1147,7 @@ export abstract class BaseBookingRoute<
                 raw: composed,
                 envelopeFrom: mailbox.primarySmtpAddress,
                 envelopeTo: [booking.bookerEmail],
+                ...(key ? { dsnReturn: "headers" as const } : {}),
             });
         } catch (err: any) {
             this.logger?.warn(`BookingRoute: failed to send booking mail for ${shown.uid}: ${err.message}`);
@@ -1232,8 +1244,10 @@ export abstract class BaseBookingRoute<
                 .compile()
                 .build();
 
-            // Sealed when zero-access covers the host's mail: no readable copy of what the booker wrote is stored.
-            sealed = await this.zeroAccessWriter?.sealRaw(mailbox, raw, uid, now);
+            // Sealed when zero-access covers the host's mail: no readable copy of what the booker wrote is stored. The uid is fresh to
+            // this notification and never retried under, so no other filing can share its za/<mailbox>/<uid> key: named as such
+            // (`freshMessageUid`), a seal that fails after storing the blob removes it, as nothing else would ever name it.
+            sealed = await this.zeroAccessWriter?.sealRaw(mailbox, raw, uid, now, { freshMessageUid: true });
             if (sealed) {
                 bodyBlobKey = sealed.bodyBlobKey;
             } else {

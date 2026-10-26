@@ -464,6 +464,25 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
             expect(removeIndexEntry).toHaveBeenCalledTimes(1);
         });
 
+        it("Removes a sealed notification's blob when sealing fails writing its index entry", async () => {
+            const za = await testZeroAccessKey();
+            (mailbox as any).zeroAccessKeys = [za];
+            mailbox = await mailboxRepo.save(mailbox);
+            const bookingType = await createBookingType();
+            const route: any = objectFactory.getInstance("routes.BookingRoute");
+            // The index entry sealRaw() writes after storing the sealed blob: no entry behind the failure, so the seal throws.
+            const indexCreate = vi.spyOn(route.zeroAccessWriter.indexEntryRepo, "create").mockRejectedValueOnce(new Error("index down"));
+            const messageCreate = vi.spyOn(route.messageRepo, "create");
+
+            const result = await book(bookingType.slug, validBooking());
+
+            expect(result.status).toBe(200);
+            expect(indexCreate).toHaveBeenCalledTimes(1);
+            expect(messageCreate).not.toHaveBeenCalled();
+            // The notification's uid is fresh to it and never retried, so nothing else would ever name or remove the blob.
+            expect([...blobStore.blobs.keys()].filter((key) => key.startsWith("za/"))).toEqual([]);
+        });
+
         it("Puts the video call's URL in the event's location and describes the booking in its description.", async () => {
             const bookingType = await createBookingType();
 

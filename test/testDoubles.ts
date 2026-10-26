@@ -26,6 +26,8 @@ import type { ObjectFactory } from "@rapidrest/service-core";
  */
 export class RecordingMailTransport implements MailTransport {
     public readonly name: string = "recording";
+    /** Honors `OutboundMessage.dsnReturn`, as `PostfixSendmailTransport` does; a test sets it `false` to stand in for one that can't (SES). */
+    public headersOnlyDsn: boolean = true;
     public sent: OutboundMessage[] = [];
 
     public async send(message: OutboundMessage): Promise<TransportResult> {
