@@ -28,7 +28,7 @@ import FormField from "@rapidmx/web-client/lib/components/forms/FormField.js";
 import TimeZonePicker from "@rapidmx/web-client/lib/components/pickers/TimeZonePicker.js";
 import { timeZoneOptions } from "@rapidmx/web-client/lib/util/timeZone.js";
 import Modal from "@rapidmx/web-client/lib/components/overlays/Modal.js";
-import { bookingContent, hostLinkKey, openedHostCopy, openHostCopy } from "../shared/bookingProtection.js";
+import { hostChange, openHostCopy } from "../shared/bookingProtection.js";
 
 const INPUT_CLASS =
     "w-full text-sm py-2.5 px-3 border border-border rounded-sm bg-surface text-text focus:outline-none focus:border-primary";
@@ -117,19 +117,17 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
         try {
             const listed = bookings.find((b) => b.uid === bookingUid);
             // A protected booking's event and mail to the booker are rebuilt from what the booker wrote, which only this mailbox's unlocked
-            // key opens - opened again now, since the list may have loaded while the mailbox was locked and still hold the placeholders.
-            const shown = listed?.protected ? await openedHostCopy(listed) : listed;
-            const linkKey = shown?.protected ? await hostLinkKey(shown) : undefined;
-            if (listed?.protected && (!shown || !linkKey)) {
+            // key opens - opened again now, since the list may have loaded while the mailbox was locked and still hold the placeholders,
+            // and sent only once checked against the booker's own copy and key (`hostChange()`).
+            const change = listed?.protected ? await hostChange(listed) : undefined;
+            if (listed?.protected && !change) {
                 setBookingsError("Unlock your mailbox to change a protected booking's video link.");
                 return;
             }
             // What the field shows: an untouched field holds the saved URL, so saving it again keeps it (and a minted link keyed)
             // rather than clearing it. Only a field emptied out clears it.
-            const videoUrl = (videoUrlDrafts[bookingUid] ?? shown?.locationVideoUrl ?? "").trim() || undefined;
-            const updated = await openHostCopy(
-                await setBookingLocationVideoUrl(bookingUid, videoUrl, shown?.protected ? { content: bookingContent(shown), linkKey } : undefined),
-            );
+            const videoUrl = (videoUrlDrafts[bookingUid] ?? listed?.locationVideoUrl ?? "").trim() || undefined;
+            const updated = await openHostCopy(await setBookingLocationVideoUrl(bookingUid, videoUrl, change));
             setBookings((current) => current.map((b) => (b.uid === bookingUid ? updated : b)));
         } catch (err) {
             setBookingsError(err instanceof ApiRequestError ? err.message : "Could not save this booking's video URL.");

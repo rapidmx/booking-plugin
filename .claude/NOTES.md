@@ -600,3 +600,37 @@ Fixed (findings by review id):
   `openBookerCopy()` skips non-text fields; `bookingContent()` copies strings only. The server still can't see inside a sealed value.
 
 meet-plugin's node_modules copy was refreshed for its #324/#325 changes (RelayFrameKind, held evictions); nothing here uses them.
+
+## 2026-10-26: Review round 6 fixes
+
+Fixed (findings by review id):
+
+- **#622 The host's client as a decryption oracle.** A booker controls the host copy (`sealedFields`) and the wrap (`keyWraps[].cms`),
+  and the server can only check they are blobs sealed to the host. `handleSaveVideoUrl()` used to post whatever opened with the host's
+  zero-access key as `content`, and the raw unwrapped bytes as `linkKey`, which the server mails to the booker's address: a stolen sealed
+  event description (or any ciphertext sealed to the host) put in a booking came back to the booker in plaintext. Now
+  `apps/shared/bookingProtection.ts` `hostChange()` is the only way a host change gets `content`/`linkKey`, and it returns `undefined`
+  (the page then shows "Unlock your mailbox...", sending nothing) unless all of this holds:
+  - the host copy opens now (`openedHostCopy()`, as #146);
+  - the unwrapped bytes are the private key of the booking's `meetingKeyCertificate` (web-client `certificateHoldsKey()`);
+  - that key signed the booking's booker address: new `protection.keyBinding`, a raw P-256 ECDSA signature of
+    `"rapidmx-booking-key-v1\n" + bookerEmail.trim().toLowerCase()` that `protectBooking()` (which now takes `bookerEmail`) makes;
+  - the booker copy (`guestSealedFields`) opened with that key holds exactly the host copy's fields, the name among them.
+  The signature is what stops a booker from reusing another booking's or meeting's wrap and certificate (sealing their own copies to
+  that public certificate is easy; signing their address with a key they never had isn't), and a whole other booking replayed under the
+  attacker's address. The agreement check stops a stolen ciphertext as a host field (no matching booker copy without its plaintext).
+  Server side: `validateBookingProtection()` requires `keyBinding` (86 base64 chars plus `==`, 400 otherwise), `Booking.keyBinding`
+  (both models; SQL `text`, Mongo column) stores it, `BookingKeyExpiryJob` clears it with the certificate, and `toPublicBooking(...,
+  "host")` now also gives the host `guestSealedFields`, `meetingKeyCertificate` and `keyBinding` (the booker copy is sealed to a key the
+  host can unwrap anyway). There are no protected bookings in production yet (meet-plugin protection is unreleased), so `keyBinding` is
+  required rather than optional. `hostLinkKey()` is gone. Spec: meet-plugin `specs/meeting_privacy.md` §6.2 "What opens is checked".
+- **#623 Booker's name to a meet-plugin that can't protect the meeting.** `book()` no longer passes `displayName` for a protected
+  booking. `maybeCreateVideoMeetingJoinUrl()` loads meet-plugin's root through the new overridable `importVideoconfIntegration()` (also
+  used by `maybeExtendVideoMeetingKey()`), and for a protected booking mints only when it exports `SINGLE_INVITEE_MEETING_PROTECTION ===
+  true` (added to meet-plugin with this round). Otherwise it warns ("... can't protect it; the host sets the link") and mints nothing, so
+  `videoLinkKeyed` stays unset. Tests: the protection suite (both backends) checks the name is never handed over and that a stub
+  integration without the flag mints nothing.
+
+Left: the `optionalDependencies` range for `@rapidmx/meet-plugin` stays `^0.5.0`. The first release carrying the flag isn't published
+yet, and the runtime check covers an older install; raise it when meet-plugin is released. meet-plugin's node_modules copy was refreshed
+for the flag.

@@ -22,6 +22,8 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const FINGERPRINT = /^[0-9a-f]{64}$/;
 const MAX_SEALED_LENGTH = 64 * 1024;
 const MAX_CERTIFICATE_LENGTH = 8 * 1024;
+/** A P-256 ECDSA signature, raw `r || s` (64 bytes), base64. */
+const KEY_BINDING = /^[A-Za-z0-9+/]{86}==$/;
 /** How long after its slot ends a booking's key may be kept at most. */
 const MAX_KEY_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 /** The longest plaintext field a request may carry for the mail it sends (`bookingContentOf()`). */
@@ -40,6 +42,9 @@ export interface BookingProtectionBody {
     meetingTitle?: unknown;
     /** The `#` part of the booker's links, for the mail this request sends. Never stored. */
     linkKey?: unknown;
+    /** The booking key's signature of the booking's host mailbox and booker address (`apps/shared/bookingProtection.ts`
+     * `keyBindingData()`), so the host's client sends the booking's key and what the booker wrote only to the address that made it. */
+    keyBinding?: unknown;
 }
 
 /** One sealed copy of the booking key, for the host. */
@@ -59,6 +64,7 @@ export interface BookingProtection {
     guestSealedFields: Record<string, string>;
     meetingTitle?: string;
     linkKey: string;
+    keyBinding: string;
 }
 
 /** What a manage or host request carries in plaintext about a protected booking, for the mail it sends (never stored). */
@@ -98,7 +104,8 @@ export function isLinkKey(value: unknown): value is string {
 /**
  * `body` validated for a booking of mailbox `mailboxUid` whose host's zero-access key is `hostFingerprint`, for a slot ending at
  * `slotEnd` (400 otherwise): the booking key's certificate; an expiry after now and at most a week after the slot; one to four wraps,
- * all the host's, to that key; both sealed copies; and the link key.
+ * all the host's, to that key; both sealed copies; the link key; and the key's signature binding it to the booker (checked by the host's
+ * client, which holds the key).
  */
 export function validateBookingProtection(body: BookingProtectionBody, mailboxUid: string, hostFingerprint: string, slotEnd: Date, now: number): BookingProtection {
     if (!body || typeof body !== "object") {
@@ -135,6 +142,9 @@ export function validateBookingProtection(body: BookingProtectionBody, mailboxUi
     if (!isLinkKey(body.linkKey)) {
         throw invalid("'protection.linkKey' must be the booking's link key.");
     }
+    if (typeof body.keyBinding !== "string" || !KEY_BINDING.test(body.keyBinding)) {
+        throw invalid("'protection.keyBinding' must be the booking key's signature of the booking.");
+    }
     return {
         certificate,
         keyExpiresAt: expires,
@@ -143,6 +153,7 @@ export function validateBookingProtection(body: BookingProtectionBody, mailboxUi
         guestSealedFields: sealedFieldsOf(body.guestSealedFields, "guestSealedFields"),
         meetingTitle: body.meetingTitle,
         linkKey: body.linkKey,
+        keyBinding: body.keyBinding,
     };
 }
 

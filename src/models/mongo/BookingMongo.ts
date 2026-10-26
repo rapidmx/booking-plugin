@@ -138,6 +138,11 @@ export class BookingMongo extends BaseMongoEntity implements Booking {
     public meetingKeyCertificate?: string | null;
 
     @Column()
+    @Description("The booking key's signature of the host mailbox and booker address, which the host's client checks.")
+    @Nullable
+    public keyBinding?: string | null;
+
+    @Column()
     @Description("The booking key sealed to the host's zero-access certificate.")
     @Nullable
     public keyWraps?: { mailboxUid: string; recipientFingerprint: string; kind: "meeting-key"; cms: string }[] | null;
@@ -189,6 +194,7 @@ export class BookingMongo extends BaseMongoEntity implements Booking {
             this.sealedFields = "sealedFields" in other ? other.sealedFields : this.sealedFields;
             this.guestSealedFields = "guestSealedFields" in other ? other.guestSealedFields : this.guestSealedFields;
             this.meetingKeyCertificate = "meetingKeyCertificate" in other ? other.meetingKeyCertificate : this.meetingKeyCertificate;
+            this.keyBinding = "keyBinding" in other ? other.keyBinding : this.keyBinding;
             this.keyWraps = "keyWraps" in other ? other.keyWraps : this.keyWraps;
             this.keyExpiresAt = "keyExpiresAt" in other ? other.keyExpiresAt : this.keyExpiresAt;
             this.keyDiscardedAt = "keyDiscardedAt" in other ? other.keyDiscardedAt : this.keyDiscardedAt;

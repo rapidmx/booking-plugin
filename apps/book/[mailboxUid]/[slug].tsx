@@ -193,6 +193,7 @@ function BookingContent({ mailboxUid, slug }: { mailboxUid: string; slug: string
                       bookingType!.hostCertificate,
                       bookingType!.hostCertificateFingerprint!,
                       content,
+                      bookerEmail,
                       new Date(selectedSlot!.end),
                       selectedLocationOption.type === BookingLocationType.VIDEO ? `${selectedMeetingType!.name} with ${content.bookerName}` : undefined,
                   )

@@ -60,6 +60,7 @@ describe("PublicBookingPage for a protected host", () => {
             protectedType.hostCertificate,
             protectedType.hostCertificateFingerprint,
             expect.objectContaining({ bookerName: "Bob" }),
+            "bob@example.com",
             new Date(slot.end),
             "30 Minute Intro Call with Bob",
         );

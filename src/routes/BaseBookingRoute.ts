@@ -105,6 +105,15 @@ type CreateSingleInviteeVideoMeetingFn = typeof import("@rapidmx/meet-plugin").c
  * `CreateSingleInviteeVideoMeetingFn`. Missing from a meet-plugin older than this package expects, which then keeps the old expiry. */
 type ExtendSingleInviteeMeetingKeyFn = typeof import("@rapidmx/meet-plugin").extendSingleInviteeMeetingKey;
 
+/** What this package uses of `@rapidmx/meet-plugin`'s root entry point, as an installed release may lack any of it (type-only).
+ * `SINGLE_INVITEE_MEETING_PROTECTION` is there only in a release whose `createSingleInviteeVideoMeeting()` honors its `protection`
+ * argument: an older one ignores it and mints the meeting unprotected, with the invitee's name stored readable. */
+interface VideoconfIntegration {
+    createSingleInviteeVideoMeeting?: CreateSingleInviteeVideoMeetingFn;
+    extendSingleInviteeMeetingKey?: ExtendSingleInviteeMeetingKeyFn;
+    SINGLE_INVITEE_MEETING_PROTECTION?: boolean;
+}
+
 /** How long after its slot a protected booking's key lasts - what the booking page's `protectBooking()` (`BOOKING_KEY_GRACE_MS`) gives a
  * new booking, and what a reschedule gives the moved one. */
 const BOOKING_KEY_GRACE_MS = 60 * 60_000;
@@ -224,7 +233,7 @@ export interface PublicBooking {
     /** See `PublicBookingType.bannerVersion`. */
     bannerVersion?: string;
     /** Protected end to end: the booker-written fields above are placeholders; the booker opens `guestSealedFields` with the key their
-     * manage link carries, the host opens `sealedFields` with their zero-access key. */
+     * manage link carries, the host opens `sealedFields` with their zero-access key (and is given the booker's copy too, to check it). */
     protected?: true;
     guestSealedFields?: Record<string, string>;
     meetingKeyCertificate?: string;
@@ -234,6 +243,8 @@ export interface PublicBooking {
     videoLinkKeyed?: true;
     /** To the host only. */
     sealedFields?: Record<string, string>;
+    /** To the host only: the booking key's signature binding the booking to its booker. */
+    keyBinding?: string;
     /** To the host only: the booking key sealed to the host's zero-access certificate. */
     keyWraps?: { mailboxUid: string; recipientFingerprint: string; kind: "meeting-key"; cms: string }[];
 }
@@ -347,6 +358,12 @@ export abstract class BaseBookingRoute<
      * guard against a missing/broken video plugin ever blocking a booking.
      */
     protected abstract importVideoconfBackend(): Promise<VideoconfBackendClasses | undefined>;
+
+    /** Dynamically `import()`s `@rapidmx/meet-plugin`'s root entry point, where its integration functions live. Throws when it won't
+     * resolve; every caller is inside its own `try`/`catch`. */
+    protected async importVideoconfIntegration(): Promise<VideoconfIntegration> {
+        return await import(VIDEOCONF_PLUGIN_NAME);
+    }
 
     /** The backend's `EncryptionPolicy` model, for sealing a booking's event into a calendar zero-access encryption protects (restapi
      * `specs/search.md` §3 *What It Covers*). Without it nothing is sealed. */
@@ -544,7 +561,15 @@ export abstract class BaseBookingRoute<
     private async toPublicBooking(booking: B, bookingType: BT, includeToken: boolean, audience: "booker" | "host" = "booker"): Promise<PublicBooking> {
         const protection: Partial<PublicBooking> = booking.keyProtected
             ? audience === "host"
-                ? { protected: true, sealedFields: booking.sealedFields ?? undefined, keyWraps: booking.keyWraps ?? undefined }
+                ? {
+                      protected: true,
+                      sealedFields: booking.sealedFields ?? undefined,
+                      keyWraps: booking.keyWraps ?? undefined,
+                      // What the host's client checks the host copy and the wrap against before a change mails either to the booker.
+                      guestSealedFields: booking.guestSealedFields ?? undefined,
+                      meetingKeyCertificate: booking.meetingKeyCertificate ?? undefined,
+                      keyBinding: booking.keyBinding ?? undefined,
+                  }
                 : {
                       protected: true,
                       guestSealedFields: booking.guestSealedFields ?? undefined,
@@ -811,6 +836,9 @@ export abstract class BaseBookingRoute<
      * entirely from the compiled output, so it costs nothing at runtime on a deployment that never installs the
      * package at all. The actual load is always a dynamic `import()` (never a static one), specifically because a
      * static import would fail to resolve entirely on such a deployment.
+     *
+     * With `protection` (a protected booking), it mints only through a meet-plugin exporting `SINGLE_INVITEE_MEETING_PROTECTION`, and
+     * answers `undefined` (with a warning) otherwise, so the booking's link is never called keyed for a meeting that isn't protected.
      */
     private async maybeCreateVideoMeetingJoinUrl(
         mailboxUid: string,
@@ -826,10 +854,15 @@ export abstract class BaseBookingRoute<
             if (!backend) {
                 return undefined;
             }
-            const { createSingleInviteeVideoMeeting }: { createSingleInviteeVideoMeeting: CreateSingleInviteeVideoMeetingFn } = await import(
-                VIDEOCONF_PLUGIN_NAME
-            );
-            return await createSingleInviteeVideoMeeting(this._objectFactory!, backend.meetingClass, backend.inviteeClass, mailboxUid, title, invitee, protection);
+            const { createSingleInviteeVideoMeeting, SINGLE_INVITEE_MEETING_PROTECTION }: VideoconfIntegration = await this.importVideoconfIntegration();
+            if (protection && SINGLE_INVITEE_MEETING_PROTECTION !== true) {
+                // A meet-plugin too old to protect the meeting would mint it unprotected under a link the booking calls keyed.
+                this.logger?.warn(
+                    `BookingRoute: not minting a video meeting for a protected booking of mailbox ${mailboxUid}: the installed ${VIDEOCONF_PLUGIN_NAME} can't protect it; the host sets the link`,
+                );
+                return undefined;
+            }
+            return await createSingleInviteeVideoMeeting!(this._objectFactory!, backend.meetingClass, backend.inviteeClass, mailboxUid, title, invitee, protection);
         } catch (err: any) {
             this.logger?.warn(`BookingRoute: failed to mint a video meeting for mailbox ${mailboxUid}: ${err.message}`);
             return undefined;
@@ -848,7 +881,7 @@ export abstract class BaseBookingRoute<
         }
         try {
             const backend: VideoconfBackendClasses | undefined = await this.importVideoconfBackend();
-            const { extendSingleInviteeMeetingKey }: { extendSingleInviteeMeetingKey?: ExtendSingleInviteeMeetingKeyFn } = await import(VIDEOCONF_PLUGIN_NAME);
+            const { extendSingleInviteeMeetingKey }: VideoconfIntegration = await this.importVideoconfIntegration();
             if (!backend || !extendSingleInviteeMeetingKey) {
                 return;
             }
@@ -958,6 +991,7 @@ export abstract class BaseBookingRoute<
                           sealedFields: protection.sealedFields,
                           guestSealedFields: protection.guestSealedFields,
                           meetingKeyCertificate: protection.certificate,
+                          keyBinding: protection.keyBinding,
                           keyWraps: protection.keyWraps,
                           keyExpiresAt: protection.keyExpiresAt,
                           videoLinkKeyed: videoLinkKeyed || undefined,
@@ -1443,7 +1477,8 @@ export abstract class BaseBookingRoute<
             ? await this.maybeCreateVideoMeetingJoinUrl(
                   bookingType.mailboxUid,
                   meetingType.name,
-                  { email: body.bookerEmail!.trim().toLowerCase(), displayName: body.bookerName!.trim() },
+                  // A protected booking's name is never handed over: only a meet-plugin that protects the meeting would leave it unstored.
+                  { email: body.bookerEmail!.trim().toLowerCase(), displayName: protection ? undefined : body.bookerName!.trim() },
                   // The meeting is protected with the booking's own key, which the booker's video link carries too.
                   protection && {
                       meetingKey: { certificate: protection.certificate },

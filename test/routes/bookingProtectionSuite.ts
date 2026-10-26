@@ -7,7 +7,7 @@
 import { request } from "@rapidrest/service-core/test";
 import { PluginRegistry } from "@rapidmx/restapi";
 import { simpleParser } from "mailparser";
-import { bookingProtection, LINK_KEY, sealed } from "../bookingProtectionFixture.js";
+import { bookingProtection, KEY_BINDING, LINK_KEY, sealed } from "../bookingProtectionFixture.js";
 
 export interface BookingProtectionSuiteContext {
     app: () => any;
@@ -76,6 +76,7 @@ export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void
                 sealedFields: { bookerName: sealed("host:Grace Hopper"), bookerNotes: sealed("host:notes") },
                 guestSealedFields: { bookerName: sealed("guest:Grace Hopper"), bookerNotes: sealed("guest:notes") },
                 keyWraps: [expect.objectContaining({ recipientFingerprint: key.fingerprint })],
+                keyBinding: KEY_BINDING,
             });
             expect(booking.bookerNotes ?? null).toBeNull();
             expect(JSON.stringify(booking)).not.toContain("Looking forward to it.");
@@ -177,6 +178,8 @@ export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void
             ["a wrap to another key", (_fp: string) => ({ protection: bookingProtection("x", "cd".repeat(32)) })],
             ["a key expiring after the week the booking allows", (fp: string) => ({ protection: { ...bookingProtection("", fp), keyExpiresAt: "2099-07-01T00:00:00.000Z" } })],
             ["no link key", (fp: string) => ({ protection: { ...bookingProtection("", fp), linkKey: "nope" } })],
+            ["no key binding", (fp: string) => ({ protection: { ...bookingProtection("", fp), keyBinding: undefined } })],
+            ["a key binding that isn't a P-256 signature", (fp: string) => ({ protection: { ...bookingProtection("", fp), keyBinding: Buffer.alloc(72).toString("base64") } })],
             ["an unsealed booker field", (fp: string) => ({ protection: { ...bookingProtection("", fp), guestSealedFields: { bookerName: "Grace Hopper!" } } })],
             ["an unknown sealed field", (fp: string) => ({ protection: { ...bookingProtection("", fp), sealedFields: { bookerName: sealed("x"), bookerEmail: sealed("x") } } })],
             ["no sealed name", (fp: string) => ({ protection: { ...bookingProtection("", fp), sealedFields: { bookerNotes: sealed("x") } } })],
@@ -215,7 +218,7 @@ export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void
             expect(untitled.status, JSON.stringify(untitled.body)).toBe(400);
         });
 
-        it("Gives the booker their own sealed copy by the manage token, and the host theirs and the key's wrap", async () => {
+        it("Gives the booker their own sealed copy by the manage token, and the host theirs, the key's wrap and what checks them", async () => {
             const key = await ctx.protectHost();
             const { bookingType, result } = await bookProtected(key.fingerprint);
             const booker = await request(ctx.app()).get(`${ctx.baseUrl}/manage/${result.body.manageToken}`);
@@ -225,7 +228,14 @@ export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void
             expect(booker.body.keyWraps).toBeUndefined();
             const listed = await host().get(`${ctx.baseUrl}/host?bookingTypeUid=${bookingType.uid}`);
             expect(listed.body[0]).toMatchObject({ protected: true, sealedFields: { bookerName: sealed("host:Grace Hopper") }, keyWraps: [expect.anything()] });
-            expect(listed.body[0].guestSealedFields).toBeUndefined();
+            // The host's client sends a change only once the key is the certificate's, signed the booker's address and opens a booker copy
+            // matching the host's.
+            expect(listed.body[0]).toMatchObject({
+                guestSealedFields: { bookerName: sealed("guest:Grace Hopper") },
+                meetingKeyCertificate: booker.body.meetingKeyCertificate,
+                keyBinding: KEY_BINDING,
+            });
+            expect(booker.body.keyBinding).toBeUndefined();
         });
 
         it("Mails a reschedule from the plaintext and key the manage page sends, never storing either", async () => {
@@ -407,6 +417,33 @@ export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void
                 expect(await meetingExpiry()).toBe(expected);
             });
 
+            it("Mints the meeting without ever handing the meeting plugin the booker's name", async () => {
+                const real: any = await import(VIDEOCONF_PLUGIN_NAME);
+                const create = vi.fn(real.createSingleInviteeVideoMeeting);
+                vi.spyOn(ctx.route(), "importVideoconfIntegration").mockResolvedValue({ ...real, createSingleInviteeVideoMeeting: create });
+                const { result } = await bookVideo();
+                expect(result.body.videoLinkKeyed).toBe(true);
+                expect(create).toHaveBeenCalledTimes(1);
+                expect(create.mock.calls[0][5]).toEqual({ email: "grace@example.com", displayName: undefined });
+                expect(JSON.stringify(await ctx.findVideoMeetings())).not.toContain("Grace Hopper");
+            });
+
+            it("Mints nothing through a meeting plugin too old to protect the meeting, leaving the link to the host", async () => {
+                const create = vi.fn(async () => "https://example.com/meet/unprotected");
+                // A release before protected minting: it has the function, which ignores the protection, and no capability flag.
+                vi.spyOn(ctx.route(), "importVideoconfIntegration").mockResolvedValue({ createSingleInviteeVideoMeeting: create });
+                const warn = vi.spyOn(ctx.route().logger, "warn");
+                const { result } = await bookVideo();
+                expect(create).not.toHaveBeenCalled();
+                expect(result.body.locationVideoUrl).toBeUndefined();
+                expect(result.body.videoLinkKeyed).toBeUndefined();
+                const [booking] = await ctx.findBookings();
+                expect(booking.locationVideoUrl ?? null).toBeNull();
+                expect(booking.videoLinkKeyed ?? null).toBeNull();
+                expect(await ctx.findVideoMeetings()).toHaveLength(0);
+                expect(warn).toHaveBeenCalledWith(expect.stringContaining("can't protect it"));
+            });
+
             it("Keeps the link keyed when the host saves it again unchanged, and refuses a change it can't compose from what the booker wrote", async () => {
                 const { result } = await bookVideo();
                 const [booking] = await ctx.findBookings();
@@ -457,6 +494,7 @@ export function bookingProtectionSuite(ctx: BookingProtectionSuiteContext): void
             expect(discarded.guestSealedFields ?? null).toBeNull();
             expect(discarded.meetingKeyCertificate ?? null).toBeNull();
             expect(discarded.keyWraps ?? null).toBeNull();
+            expect(discarded.keyBinding ?? null).toBeNull();
             expect(discarded.keyDiscardedAt).toBeTruthy();
             expect(discarded.sealedFields).toEqual(booking.sealedFields);
         });

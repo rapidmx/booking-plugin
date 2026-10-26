@@ -268,6 +268,10 @@ export interface Booking extends BaseEntity {
     guestSealedFields?: Record<string, string> | null;
     /** The booking key's certificate (base64 DER). Discarded at `keyExpiresAt`. */
     meetingKeyCertificate?: string | null;
+    /** The booking key's signature (base64 raw P-256 ECDSA) of the host mailbox and the booker's address: the host's client sends the key and
+     * what the booker wrote only for the booker that made the key, never for a booking replaying another's sealed values. Discarded at
+     * `keyExpiresAt`. */
+    keyBinding?: string | null;
     /** The booking key sealed to the host's zero-access certificate, so the host can send the booker their links again. */
     keyWraps?: { mailboxUid: string; recipientFingerprint: string; kind: "meeting-key"; cms: string }[] | null;
     /** When the booker's copy and the booking key are discarded: an hour after the slot ends. */

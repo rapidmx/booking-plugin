@@ -7,6 +7,9 @@
 /** The link key a protected booking's links carry. */
 export const LINK_KEY = "k=" + "L".repeat(30);
 
+/** A booking key's signature binding the booking to its booker, as the booking page sends it (the server only checks its shape). */
+export const KEY_BINDING = Buffer.alloc(64, 7).toString("base64");
+
 /** `text` as an opaque sealed value. */
 export const sealed = (text: string): string => Buffer.from(`sealed:${text}`).toString("base64");
 
@@ -20,6 +23,7 @@ export function bookingProtection(mailboxUid: string, hostFingerprint: string, s
         guestSealedFields: { bookerName: sealed("guest:Grace Hopper"), bookerNotes: sealed("guest:notes") },
         meetingTitle: sealed("Intro Call with Grace Hopper"),
         linkKey: LINK_KEY,
+        keyBinding: KEY_BINDING,
         ...overrides,
     };
 }

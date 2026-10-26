@@ -7,9 +7,16 @@
  * encryption the booking page makes a temporary booking key and seals what the booker writes twice: to the host's zero-access certificate
  * (the host's copy) and to the booking key (the booker's copy, opened with the key their manage link carries after `#k=`). The booking key
  * itself is wrapped to the host, so the host's client can send the booker their links again. The server never holds the key.
+ *
+ * Anyone can seal to the host's certificate, so the host's client never sends the booker what opened with its zero-access key without
+ * proof that it is this booking's: the unwrapped key must be the certificate's, it must have signed the booker's address (`keyBinding`),
+ * and the host copy must match the booker's copy that key opens (`hostChange()`). Otherwise a booker could put any ciphertext sealed to
+ * the host - a sealed event's description, another meeting's key wrap, another booking's copies - in their booking, and have the host's
+ * client mail them its plaintext.
  */
 import { fromBase64, toBase64 } from "@rapidmx/web-client/lib/crypto/encoding.js";
 import { getUnlockedKeys } from "@rapidmx/web-client/lib/crypto/keySession.js";
+import { certificateHoldsKey } from "@rapidmx/web-client/lib/crypto/keyPairMatch.js";
 import { generateMeetingKey, importMeetingKey, meetingKeyFragment, readMeetingKeyFragment } from "@rapidmx/web-client/lib/crypto/meetingKeys.js";
 import { decryptEnvelopedDataWithKeys, encryptForRecipients } from "@rapidmx/web-client/lib/crypto/smime.js";
 import { isOpenedRecord, openSealedRecord } from "@rapidmx/web-client/lib/zeroAccess/sealedRecords.js";
@@ -69,6 +76,33 @@ export interface BookingProtectionInput {
     guestSealedFields: Record<string, string>;
     meetingTitle?: string;
     linkKey: string;
+    keyBinding: string;
+}
+
+const ECDSA_P256: EcKeyImportParams = { name: "ECDSA", namedCurve: "P-256" };
+const ECDSA_SHA256: EcdsaParams = { name: "ECDSA", hash: "SHA-256" };
+
+/** What a booking key signs (`keyBinding`): the booker's address, as the server stores it. */
+function keyBindingData(bookerEmail: string): Uint8Array {
+    return new TextEncoder().encode(`rapidmx-booking-key-v1
+${bookerEmail.trim().toLowerCase()}`);
+}
+
+/** The booking key `pkcs8`'s signature binding it to `bookerEmail` (base64 raw `r || s`). */
+async function signKeyBinding(pkcs8: Uint8Array, bookerEmail: string): Promise<string> {
+    const key = await crypto.subtle.importKey("pkcs8", pkcs8 as BufferSource, ECDSA_P256, false, ["sign"]);
+    return toBase64(new Uint8Array(await crypto.subtle.sign(ECDSA_SHA256, key, keyBindingData(bookerEmail) as BufferSource)));
+}
+
+/** Whether `signature` is the booking key `pkcs8`'s binding of it to `bookerEmail`. Never rejects. */
+async function verifyKeyBinding(pkcs8: Uint8Array, bookerEmail: string, signature: string): Promise<boolean> {
+    try {
+        const { x, y } = await crypto.subtle.exportKey("jwk", await crypto.subtle.importKey("pkcs8", pkcs8 as BufferSource, ECDSA_P256, true, ["sign"]));
+        const publicKey = await crypto.subtle.importKey("jwk", { kty: "EC", crv: "P-256", x, y }, ECDSA_P256, false, ["verify"]);
+        return await crypto.subtle.verify(ECDSA_SHA256, publicKey, fromBase64(signature) as BufferSource, keyBindingData(bookerEmail) as BufferSource);
+    } catch {
+        return false;
+    }
 }
 
 async function seal(value: unknown, certificates: Uint8Array[]): Promise<string> {
@@ -77,14 +111,15 @@ async function seal(value: unknown, certificates: Uint8Array[]): Promise<string>
 
 /**
  * What protects a booking of mailbox `mailboxUid`, whose host's zero-access certificate is `hostCertificate` (base64 DER, with
- * `hostFingerprint`), of `content`, ending at `slotEnd`. `meetingTitle`, for a video booking, is the meeting's title, sealed so both the
- * booker and the host can read it.
+ * `hostFingerprint`), of `content` by `bookerEmail`, ending at `slotEnd`. `meetingTitle`, for a video booking, is the meeting's title,
+ * sealed so both the booker and the host can read it.
  */
 export async function protectBooking(
     mailboxUid: string,
     hostCertificate: string,
     hostFingerprint: string,
     content: BookingContent,
+    bookerEmail: string,
     slotEnd: Date,
     meetingTitle?: string,
 ): Promise<BookingProtectionInput> {
@@ -107,6 +142,7 @@ export async function protectBooking(
         guestSealedFields,
         ...(meetingTitle ? { meetingTitle: await seal(meetingTitle, [key.certificateDer, host]) } : {}),
         linkKey: meetingKeyFragment(key.pkcs8),
+        keyBinding: await signKeyBinding(key.pkcs8, bookerEmail),
     };
 }
 
@@ -165,18 +201,44 @@ export async function openedHostCopy(booking: PublicBooking): Promise<PublicBook
     return isOpenedRecord(opened) && hasTextContent(opened) ? opened : undefined;
 }
 
-/** `booking`'s link key, opened from the host's wrap while the host's mailbox is unlocked - for the mail a host change sends the booker. */
-export async function hostLinkKey(booking: PublicBooking): Promise<string | undefined> {
+/** `booking`'s key, unwrapped from the host's wrap while the host's mailbox is unlocked - only when it is the key of the booking's
+ * certificate and has signed the booking's booker address (`keyBinding`), else `undefined`. What a wrap opens to is whatever was sealed
+ * to the host: unchecked, it could be another meeting's key, or any plaintext the host's key opens. */
+async function hostBookingKey(booking: PublicBooking): Promise<Uint8Array | undefined> {
     const keys = getUnlockedKeys(booking.mailboxUid)?.zeroAccessKeys;
     const wrap = booking.keyWraps?.find((candidate) => keys?.some((key) => key.fingerprint === candidate.recipientFingerprint));
-    if (!keys?.length || !wrap) {
+    if (!keys?.length || !wrap || !booking.meetingKeyCertificate || !booking.keyBinding) {
         return undefined;
     }
     try {
-        return meetingKeyFragment(await decryptEnvelopedDataWithKeys(fromBase64(wrap.cms), keys));
+        const pkcs8 = await decryptEnvelopedDataWithKeys(fromBase64(wrap.cms), keys);
+        const isBookingKey =
+            (await certificateHoldsKey(fromBase64(booking.meetingKeyCertificate), pkcs8)) &&
+            (await verifyKeyBinding(pkcs8, booking.bookerEmail, booking.keyBinding));
+        return isBookingKey ? pkcs8 : undefined;
     } catch {
         return undefined;
     }
+}
+
+/**
+ * What a host change of protected `booking` (as the host lists it) sends for the mail to the booker: what the booker wrote and their link
+ * key - or `undefined` while the host's mailbox is locked, or when any of it isn't provably this booking's. The host copy is opened again
+ * now (`openedHostCopy()`), the key is unwrapped and checked (`hostBookingKey()`), and the booker's copy opened with it must hold the same
+ * fields, the name among them. A booker can seal anything to the host's certificate but can't make a booker copy matching a ciphertext
+ * whose plaintext they don't know, nor sign their own address with a key they never had.
+ */
+export async function hostChange(booking: PublicBooking): Promise<{ content: BookingContent; linkKey: string } | undefined> {
+    const opened = await openedHostCopy(booking);
+    const pkcs8 = opened && (await hostBookingKey(booking));
+    const bookerCopy = pkcs8 && (await openBookerCopy(booking, pkcs8));
+    if (!opened || !pkcs8 || !bookerCopy) {
+        return undefined;
+    }
+    const content = bookingContent(opened);
+    const confirmed = bookingContent(bookerCopy);
+    const agrees = CONTENT_FIELDS.every((field) => content[field] === confirmed[field]);
+    return agrees && content.bookerName ? { content, linkKey: meetingKeyFragment(pkcs8) } : undefined;
 }
 
 /** `booking`'s booker-written fields, for a request that needs the plaintext for its mail. Text only. */

@@ -12,7 +12,7 @@ import { decryptEnvelopedDataWithKeys, encryptForRecipients } from "@rapidmx/web
 const { getUnlockedKeys } = vi.hoisted(() => ({ getUnlockedKeys: vi.fn() }));
 vi.mock("@rapidmx/web-client/lib/crypto/keySession.js", () => ({ getUnlockedKeys, subscribeKeySession: () => () => undefined }));
 
-const { bookingContent, hostLinkKey, openBookerCopy, openedHostCopy, openHostCopy, protectBooking, takeBookingKey, BOOKING_KEY_GRACE_MS } = await import(
+const { bookingContent, hostChange, openBookerCopy, openedHostCopy, openHostCopy, protectBooking, takeBookingKey, BOOKING_KEY_GRACE_MS } = await import(
     "../../../apps/shared/bookingProtection.js"
 );
 
@@ -23,6 +23,19 @@ async function hostKey() {
     return { certificate: toBase64(key.certificateDer), fingerprint: key.fingerprint, unlocked: { ...decryptionKey, fingerprint: key.fingerprint } };
 }
 
+/** A booking `protection` made, as the host lists it. */
+const hostListed = (protection: any, bookerEmail: string) => ({
+    uid: "b1",
+    mailboxUid: "mb",
+    protected: true,
+    bookerName: bookerEmail,
+    bookerEmail,
+    sealedFields: protection.sealedFields,
+    guestSealedFields: protection.guestSealedFields,
+    meetingKeyCertificate: protection.meetingKey.certificate,
+    keyBinding: protection.keyBinding,
+    keyWraps: protection.keyWraps,
+});
 const open = async (sealed: string, keys: any[]) => JSON.parse(new TextDecoder().decode(await decryptEnvelopedDataWithKeys(fromBase64(sealed), keys)));
 const END = new Date("2099-06-01T14:00:00.000Z");
 /** `value` sealed to `certificates` (base64 DER), as anyone holding the public certificate can. */
@@ -36,7 +49,7 @@ afterEach(() => {
 describe("bookingProtection", () => {
     it("seals what the booker writes for the host and for the booker, wraps the key to the host, and seals a meeting's title for both", async () => {
         const host = await hostKey();
-        const protection = await protectBooking("mb", host.certificate, host.fingerprint, { bookerName: "Grace", bookerNotes: "Hi", bookerPhone: "" }, END, "Intro with Grace");
+        const protection = await protectBooking("mb", host.certificate, host.fingerprint, { bookerName: "Grace", bookerNotes: "Hi", bookerPhone: "" }, "grace@example.com", END, "Intro with Grace");
 
         expect(protection.keyExpiresAt).toBe(new Date(END.valueOf() + BOOKING_KEY_GRACE_MS).toISOString());
         expect(Object.keys(protection.sealedFields).sort()).toEqual(["bookerName", "bookerNotes"]);
@@ -50,7 +63,7 @@ describe("bookingProtection", () => {
         const { decryptionKey } = await importMeetingKey(pkcs8, fromBase64(protection.meetingKey.certificate), "b1");
         expect(await open(protection.meetingTitle!, [decryptionKey])).toBe("Intro with Grace");
         expect(await open(protection.meetingTitle!, [host.unlocked])).toBe("Intro with Grace");
-        expect((await protectBooking("mb", host.certificate, host.fingerprint, { bookerName: "G" }, END)).meetingTitle).toBeUndefined();
+        expect((await protectBooking("mb", host.certificate, host.fingerprint, { bookerName: "G" }, "g@example.com", END)).meetingTitle).toBeUndefined();
     });
 
     it("takes the key from the manage link once, and opens nothing without the booking's own key", async () => {
@@ -61,32 +74,100 @@ describe("bookingProtection", () => {
         expect(history.replaceState).toHaveBeenCalledWith(null, "", "/m?x");
 
         const host = await hostKey();
-        const protection = await protectBooking("mb", host.certificate, host.fingerprint, { bookerName: "Grace" }, END);
+        const protection = await protectBooking("mb", host.certificate, host.fingerprint, { bookerName: "Grace" }, "grace@example.com", END);
         const booking: any = { uid: "b1", guestSealedFields: protection.guestSealedFields, meetingKeyCertificate: protection.meetingKey.certificate };
         const other = await generateMeetingKey(new Date(Date.now() + 60_000));
         expect(await openBookerCopy(booking, other.pkcs8)).toBeUndefined();
         expect(await openBookerCopy({ ...booking, meetingKeyCertificate: undefined }, other.pkcs8)).toBeUndefined();
     });
 
-    it("opens the host's copy and the booker's link key with the host's unlocked zero-access key", async () => {
+    it("opens the host's copy, and for a change the booker's link key, with the host's unlocked zero-access key", async () => {
         const host = await hostKey();
-        const protection = await protectBooking("mb", host.certificate, host.fingerprint, { bookerName: "Grace", bookerNotes: "Hi" }, END);
-        const listed: any = { uid: "b1", mailboxUid: "mb", protected: true, bookerName: "grace@example.com", sealedFields: protection.sealedFields, keyWraps: protection.keyWraps };
+        const protection = await protectBooking("mb", host.certificate, host.fingerprint, { bookerName: "Grace", bookerNotes: "Hi" }, " Grace@Example.com ", END);
+        const listed: any = hostListed(protection, "grace@example.com");
 
         getUnlockedKeys.mockReturnValue({ zeroAccessKeys: [host.unlocked] });
         expect(await openHostCopy(listed)).toMatchObject({ bookerName: "Grace", bookerNotes: "Hi" });
-        expect(await hostLinkKey(listed)).toBe(protection.linkKey);
+        expect(await hostChange(listed)).toEqual({ content: { bookerName: "Grace", bookerNotes: "Hi" }, linkKey: protection.linkKey });
         expect(await openHostCopy({ ...listed, protected: undefined })).toEqual({ ...listed, protected: undefined });
 
         getUnlockedKeys.mockReturnValue(undefined);
-        expect(await hostLinkKey(listed)).toBeUndefined();
+        expect(await hostChange(listed)).toBeUndefined();
         getUnlockedKeys.mockReturnValue({ zeroAccessKeys: [{ ...host.unlocked, privateKey: (await hostKey()).unlocked.privateKey }] });
-        expect(await hostLinkKey(listed)).toBeUndefined();
+        expect(await hostChange(listed)).toBeUndefined();
+        // Nothing to check the key against.
+        getUnlockedKeys.mockReturnValue({ zeroAccessKeys: [host.unlocked] });
+        expect(await hostChange({ ...listed, meetingKeyCertificate: undefined })).toBeUndefined();
+        expect(await hostChange({ ...listed, keyBinding: undefined })).toBeUndefined();
+        expect(await hostChange({ ...listed, keyBinding: "not base64!" })).toBeUndefined();
+        expect(await hostChange({ ...listed, keyBinding: toBase64(new Uint8Array(64)) })).toBeUndefined();
+        expect(await hostChange({ ...listed, guestSealedFields: undefined })).toBeUndefined();
+        // A wrap that won't open with the host's key.
+        expect(await hostChange({ ...listed, keyWraps: [{ ...listed.keyWraps[0], cms: toBase64(new Uint8Array([1, 2, 3])) }] })).toBeUndefined();
+    });
+
+    it("never opens for a change anything a booker sealed to the host that isn't their own booking's", async () => {
+        const host = await hostKey();
+        getUnlockedKeys.mockReturnValue({ zeroAccessKeys: [host.unlocked] });
+        const mine = await protectBooking("mb", host.certificate, host.fingerprint, { bookerName: "Mallory" }, "mallory@example.com", END);
+        const theirs = await protectBooking("mb", host.certificate, host.fingerprint, { bookerName: "Victim", bookerNotes: "Private" }, "victim@example.com", END);
+        // A record the host sealed for itself, as a stolen backup holds it: a sealed event's description.
+        const stolenDescription = await sealTo("The board meets about the merger", [host.certificate]);
+        const stolenBytes = toBase64(await encryptForRecipients(crypto.getRandomValues(new Uint8Array(64)), [fromBase64(host.certificate)]));
+        expect(await hostChange(hostListed(mine, "mallory@example.com"))).toEqual({ content: { bookerName: "Mallory" }, linkKey: mine.linkKey });
+
+        const forged: [string, Record<string, unknown>][] = [
+            // The stolen ciphertext as a host field: the booker's copy, sealed by whoever knows the key, can't match it.
+            ["a stolen host field", { sealedFields: { ...mine.sealedFields, bookerNotes: stolenDescription } }],
+            ["a stolen name", { sealedFields: { bookerName: stolenDescription } }],
+            // Any other ciphertext as the wrap: it opens, but to no key of the booking's certificate.
+            ["a wrap of something else", { keyWraps: [{ ...mine.keyWraps[0], cms: stolenBytes }] }],
+            // Another booking's wrap and certificate, with copies sealed to that certificate: its key never signed this booker's address.
+            [
+                "another booking's key",
+                {
+                    keyWraps: theirs.keyWraps,
+                    meetingKeyCertificate: theirs.meetingKey.certificate,
+                    guestSealedFields: { bookerName: await sealTo("Mallory", [theirs.meetingKey.certificate]) },
+                },
+            ],
+            // Another booking replayed whole under this booker's address.
+            [
+                "another booking replayed",
+                {
+                    keyWraps: theirs.keyWraps,
+                    meetingKeyCertificate: theirs.meetingKey.certificate,
+                    keyBinding: theirs.keyBinding,
+                    sealedFields: theirs.sealedFields,
+                    guestSealedFields: theirs.guestSealedFields,
+                },
+            ],
+            // Copies that disagree, or a booker copy that won't open with the key.
+            ["a booker copy saying something else", { guestSealedFields: { bookerName: await sealTo("Someone else", [mine.meetingKey.certificate]) } }],
+            ["a booker copy missing a field", { sealedFields: { ...mine.sealedFields, bookerPhone: await sealTo("555-0100", [host.certificate]) } }],
+            ["a booker copy sealed to another key", { guestSealedFields: theirs.guestSealedFields }],
+        ];
+        for (const [name, overrides] of forged) {
+            expect(await hostChange({ ...hostListed(mine, "mallory@example.com"), ...overrides } as any), name).toBeUndefined();
+        }
+        // The victim's own booking, as listed, still opens - for the victim's address only.
+        expect(await hostChange(hostListed(theirs, "victim@example.com"))).toMatchObject({ content: { bookerName: "Victim", bookerNotes: "Private" } });
+    });
+
+    it("sends no change for copies that agree on no name", async () => {
+        const host = await hostKey();
+        getUnlockedKeys.mockReturnValue({ zeroAccessKeys: [host.unlocked] });
+        const protection = await protectBooking("mb", host.certificate, host.fingerprint, { bookerName: "Grace" }, "grace@example.com", END);
+        const blank = {
+            sealedFields: { bookerName: await sealTo("", [host.certificate]) },
+            guestSealedFields: { bookerName: await sealTo("", [protection.meetingKey.certificate]) },
+        };
+        expect(await hostChange({ ...hostListed(protection, "grace@example.com"), ...blank } as any)).toBeUndefined();
     });
 
     it("opens the host's copy for a change only when every field opens now, never handing back the placeholders", async () => {
         const host = await hostKey();
-        const protection = await protectBooking("mb", host.certificate, host.fingerprint, { bookerName: "Ada", bookerNotes: "Notes" }, END);
+        const protection = await protectBooking("mb", host.certificate, host.fingerprint, { bookerName: "Ada", bookerNotes: "Notes" }, "ada@example.com", END);
         const listed: any = { uid: "b2", mailboxUid: "mb", protected: true, bookerName: "ada@example.com", sealedFields: protection.sealedFields, keyWraps: protection.keyWraps };
 
         // Locked: what the list shows is the placeholders, and a change gets nothing to send.

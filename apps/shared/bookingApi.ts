@@ -294,7 +294,7 @@ export interface PublicBooking {
     bannerVersion?: string;
     /** Protected end to end (`bookingProtection.ts`): the booker-written fields above are placeholders. */
     protected?: true;
-    /** The booker's copy, opened with their manage link's key. */
+    /** The booker's copy, opened with their manage link's key (the host gets it too, to check its own copy against). */
     guestSealedFields?: Record<string, string>;
     meetingKeyCertificate?: string;
     keyExpiresAt?: string;
@@ -303,6 +303,8 @@ export interface PublicBooking {
     /** The host's copy, opened with the host's zero-access key (`/host` only). */
     sealedFields?: Record<string, string>;
     keyWraps?: { mailboxUid: string; recipientFingerprint: string; kind: "meeting-key"; cms: string }[];
+    /** The booking key's signature of the booker's address (`/host` only, `bookingProtection.ts`). */
+    keyBinding?: string;
 }
 
 export interface BookSlotInput {

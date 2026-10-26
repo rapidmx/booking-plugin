@@ -74,6 +74,7 @@ export abstract class BookingKeyExpiryJob extends BackgroundService {
                         version: (booking as any).version,
                         guestSealedFields: null,
                         meetingKeyCertificate: null,
+                        keyBinding: null,
                         keyWraps: null,
                         keyDiscardedAt: new Date(),
                     },
