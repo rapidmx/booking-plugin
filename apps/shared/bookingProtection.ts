@@ -183,7 +183,7 @@ export async function openBookerCopy(booking: PublicBooking, pkcs8: Uint8Array):
 
 /** `booking` (as the host lists it) with the host's copy opened, while the host's mailbox is unlocked - else as it is. Unchecked. */
 async function openHostRecord(booking: PublicBooking): Promise<PublicBooking> {
-    return booking.protected && booking.sealedFields ? await openSealedRecord(booking as PublicBooking & { mailboxUid: string }) : booking;
+    return booking.protected && booking.sealedFields ? await openSealedRecord(booking) : booking;
 }
 
 /** `booking` (as the host lists it) with the host's copy opened, while the host's mailbox is unlocked - else as it is. A field that
