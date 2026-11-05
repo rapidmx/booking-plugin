@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-05
+
+### Added
+- Added the rule that the more specific agent model assignment wins where categories overlap
+- Added the RapidREST Claude Code plugin to the project settings
+
+### Changed
+- Record the standing agent model assignments in the project notes
+- Move the agent model assignments to the top of the project notes, keeping session history at the bottom
+- Update the agent model assignments to JP's revised criteria: Sonnet for general code and review, Opus for architecture, planning, investigation, security and performance, Haiku for simple operations
+- Install corepack with npm before enabling it in the workflows, as the node lts image no longer ships it
+- Upgrade @rapidrest/core to 6.1.0, @rapidrest/service-core to 2.5.1 and @rapidrest/react to 2.3.0
+- Raise the @rapidrest/core peer range from 5.x to 6.x, which @rapidrest/service-core 2.5 requires
+- Upgrade @rapidmx/restapi to ^0.36.0, @rapidmx/web-client to ^0.38.1 and @rapidmx/meet-plugin to ^0.19.0
+- Upgrade every other dependency to its latest release, keeping typescript on 6.x
+- Upgrade @rapidmx/restapi to ^0.37.0, @rapidmx/web-client to ^0.39.0 and @rapidmx/meet-plugin to ^0.20.0, with the resolutions to match
+
 ## [0.14.0] - 2026-10-26
 
 ### Changed
@@ -235,7 +252,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed the booking pages drawing the deployment logo a second time under the branding header, and pushing the branding footer off screen
 
-[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/rapidmx/booking-plugin/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/rapidmx/booking-plugin/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/rapidmx/booking-plugin/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/rapidmx/booking-plugin/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/rapidmx/booking-plugin/compare/v0.11.0...v0.12.0
