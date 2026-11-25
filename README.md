@@ -7,8 +7,9 @@
 Calendly-style booking pages for a [RapidMX server](https://github.com/RapidMX/server). A mailbox owner publishes
 booking links (booking types), each offering one or more meeting types (e.g. "15 Minute Chat" / "60 Minute Consultation")
 with their own duration and choice of locations (phone, video call, or a custom "other"). Anyone with a link picks a
-meeting type, an open slot from the owner's live calendar (availability is shared across all of a link's meeting types),
-and how to meet, and books it with no account. The booker gets a confirmation email with a link to cancel or reschedule.
+meeting type, an open slot from the owner's live calendar (availability is shared across all of a link's meeting types,
+and a link can also be blocked out by other people's calendars - see Connected calendars below), and how to meet, and
+books it with no account. The booker gets a confirmation email with a link to cancel or reschedule.
 
 This plugin used to be part of `@rapidmx/restapi`, `@rapidmx/react-shared`, `@rapidmx/web-client` and the server. Room
 and resource booking (a resource mailbox's auto-accept and booking window) is unrelated and stays in core.
@@ -38,6 +39,18 @@ and resource booking (a resource mailbox's auto-accept and booking window) is un
 - **Settings → Booking Links** at `/settings/booking-types` (the `booking-types` app, on the webmail host), listed in the
   Settings sidebar: each link can be copied from the list, belongs to a mailbox chosen in the form, and the page sets the
   mailbox's booking page avatar and banner.
+- **Connected calendars** on a booking link (`BookingType.externalBusySources`): up to ten external calendars, each
+  named by the host and given by its published ICS address (Google Calendar's "secret address in iCal format", the
+  download link most other calendar servers publish). Every busy window those calendars report blocks the link's slots
+  exactly like the mailbox's own calendar does, so a spouse's, a co-worker's or a resource calendar's commitments keep
+  the link from offering a slot that would conflict. The feed is fetched server-side over `https://` when slots are
+  computed (cached briefly, so one page view is not one fetch per visitor), and read for busy intervals only: the
+  parser takes `DTSTART`/`DTEND`/`DURATION`/`RRULE`/`EXDATE`/`RECURRENCE-ID`/`STATUS`/`TRANSP` and never looks at an
+  event's title, location, description or guests, so nothing about the other calendar's contents is stored or logged.
+  Recurring blocks expand in the event's own timezone, an all-day event covers its local day, a cancelled or
+  transparent event blocks nothing, and an unparseable rule fails closed (the window counts as busy). A feed that
+  cannot be read is skipped with a logged warning, so a calendar server having a bad afternoon never takes the booking
+  page down, and its last good answer (up to a day old) keeps blocking what it blocked before.
 
 ## Install
 
@@ -50,7 +63,8 @@ the server README's "Plugin UI" section).
 The package has two server entry points, `@rapidmx/booking-plugin/mongo` and `@rapidmx/booking-plugin/sql`, each
 exporting only the models and routes the server loads. The package root exports the backend-agnostic surface: the
 `Booking`/`BookingType`/`BookingMeetingType`/`BookingLocationOption` types, `BookingStatus`/`BookingLocationType`, the
-slot utilities (`generateCandidateSlots`, `subtractBusy`, `normalizeSlug`, `validateAvailability`) and the abstract
+slot utilities (`generateCandidateSlots`, `subtractBusy`, `normalizeSlug`, `validateAvailability`), the external busy
+feed utilities (`checkExternalBusyFeedUrl`, `fetchIcsFeed`, `parseIcsBusyFeed`, `externalBusyWindows`) and the abstract
 `BaseBookingRoute`/`BaseBookingTypeRoute`.
 
 Peer dependencies: `@rapidmx/restapi` 0.12 or later, `@rapidrest/core` 5, `@rapidrest/service-core` 2,
@@ -79,8 +93,8 @@ web-client/lib/*` (formerly `@rapidmx/react-shared`, merged into `web-client` un
 - `apps/settings-booking-types`: the list, new and detail pages. Each passes its props, including `pluginNav`, to
   `SettingsShell` with `active="booking-types"`, so the Booking Links entry is highlighted. The detail page also lists
   the link's recent bookings and lets the host set a video booking's meeting URL after the fact.
-- `apps/shared`: `bookingApi.ts` (the typed API client), `AvailabilityEditor` and `MeetingTypesEditor` (a booking link's
-  meeting types and their location options).
+- `apps/shared`: `bookingApi.ts` (the typed API client), `AvailabilityEditor`, `MeetingTypesEditor` (a booking link's
+  meeting types and their location options) and `ExternalBusyEditor` (the calendars whose busy time blocks the link).
 
 ## Data
 

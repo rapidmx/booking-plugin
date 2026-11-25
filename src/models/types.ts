@@ -98,6 +98,25 @@ export interface BookingMeetingType {
 }
 
 /**
+ * An external calendar whose busy time blocks a `BookingType`'s slots, exactly as the mailbox's own calendar does -
+ * rapidmx/server#11. `url` is the calendar's published ICS address (Google Calendar's "secret address in iCal format",
+ * the download link most other calendar servers publish): fetched server-side over `https://` at slot-generation time
+ * and parsed for busy intervals only, never for events' contents (see `util/ExternalBusyUtils.ts`).
+ *
+ * `uid` is this source's stable identity, assigned server-side (`BaseBookingTypeRoute`) when omitted on write, so a
+ * fetched feed's outcome stays addressable to the same source the settings screen shows.
+ */
+export interface ExternalBusySource {
+    uid: string;
+
+    /** What the settings screen calls this source, e.g. "Spouse" or "Dock schedule". */
+    label?: string;
+
+    /** The `https://` address of the calendar's ICS feed. Validated by `validateAvailability()` / `checkExternalBusyFeedUrl()`. */
+    url: string;
+}
+
+/**
  * Defines a single bookable offering owned by a `Mailbox` - the Calendly-style "30 minute intro call" a
  * completely unauthenticated visitor can pick a slot from and book. Availability is expressed as recurring
  * weekly `availability` windows plus per-date `dateOverrides`, and is intersected at request time against the
@@ -151,6 +170,9 @@ export interface BookingType extends BaseEntity {
 
     /** Per-date replacements for `availability`. A date present here wins outright for that date. */
     dateOverrides: BookingDateOverride[];
+
+    /** External calendars whose busy windows also block this type's slots (rapidmx/server#11). Unset means none. */
+    externalBusySources?: ExternalBusySource[];
 
     /** How far apart consecutive candidate slot start times are, in minutes. Defaults to `durationMinutes`
      * (back-to-back slots) when unset. */

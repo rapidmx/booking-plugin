@@ -58,6 +58,7 @@ import {
     type ZeroAccessWriter,
 } from "@rapidmx/restapi";
 import { generateCandidateSlots, normalizeSlug, subtractBusy } from "../util/BookingUtils.js";
+import { externalBusyWindows as fetchExternalBusyWindows } from "../util/ExternalBusyUtils.js";
 import {
     BOOKING_REMINDER_MINUTES,
     bookingEventContent,
@@ -67,7 +68,7 @@ import {
     withReminderAlarm,
     type BookingEventDetails,
 } from "../util/BookingEventUtils.js";
-import { Booking, BookingLocationOption, BookingLocationType, BookingMeetingType, BookingProfile, BookingStatus, BookingType } from "../models/types.js";
+import { Booking, BookingLocationOption, BookingLocationType, BookingMeetingType, BookingProfile, BookingStatus, BookingType, type ExternalBusySource } from "../models/types.js";
 import {
     type BookingContent,
     bookingContentOf,
@@ -82,7 +83,7 @@ import { profileImageVersion } from "./BaseBookingProfileRoute.js";
 const { Config, Init, Inject, Logger } = ObjectDecorators;
 const { Description, Summary } = DocDecorators;
 const { Transactional } = DatabaseDecorators;
-const { Get, Param, Post, Query, RateLimit, Request, Validate, User: AuthUser } = RouteDecorators;
+const { Get, Param, Post, Query, RateLimit, Request, Validate, User: AuthUser, Auth } = RouteDecorators;
 
 /**
  * The exact npm package name `PluginRegistry.isActive()` checks - see `maybeCreateVideoMeetingJoinUrl()`'s doc
@@ -298,6 +299,16 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+\.[^\s@]+$/;
  *
  * A booking type is addressed by its mailbox as well as its slug (`/types/:mailboxUid/:slug`), since a slug is only
  * unique within one mailbox.
+ *
+ * ## Anonymous endpoints
+ *
+ * The booker's endpoints - `publicBookingType()`, `slots()`, `book()`, and the three manage-token ones - carry `@Auth([], false)`:
+ * no auth strategy runs, so `req.auth` is never set and `RouteUtils.checkCsrf()` never gates them. They authorize by `slug` and by
+ * the unguessable `manageToken`, never by who is calling, so the CSRF double-submit check has nothing to protect here - and leaving
+ * it in place broke the documented embed flow: a visitor signed into the webmail carries a `jwt` cookie, which marks their request
+ * cookie-authenticated, and the check then rejects any `Origin` outside the deployment's `cors.origins` (the mail/auth hostnames,
+ * never the site the page is embedded on) with 403 `api-105`, matching double-submit pair included - see rapidmx/server#13. The
+ * `/host` endpoints are the opposite case and keep the default `["jwt"]` strategy: they act as the signed-in host.
  *
  * ## Rate limiting
  *
@@ -710,6 +721,41 @@ export abstract class BaseBookingRoute<
         return [...uids];
     }
 
+    /** Reads one external busy feed: `externalBusyWindows()` from `util/ExternalBusyUtils.js`, or a double in a test. */
+    protected readExternalBusyWindows: typeof fetchExternalBusyWindows = fetchExternalBusyWindows;
+
+    /**
+     * The busy windows of `bookingType`'s external calendars inside `[windowStart, windowEnd]` (rapidmx/server#11),
+     * for `slots()` and for `requireAvailableSlot()`'s re-check - the same list either one feeds to `subtractBusy()`.
+     * A feed that can't be read contributes nothing and is logged (never thrown: a booking page stays usable when
+     * somebody else's calendar server is down, and `externalBusyWindows()`'s cache keeps blocking the windows a
+     * recent fetch did report); a feed whose windows can't be *expanded* fail-closes inside `computeBusyWindows()`,
+     * the same way the host's own calendar does.
+     */
+    private async externalBusyWindows(bookingType: BT, windowStart: Date, windowEnd: Date): Promise<OccurrenceWindow[]> {
+        const sources: ExternalBusySource[] = bookingType.externalBusySources ?? [];
+        if (sources.length === 0) {
+            return [];
+        }
+        let outcomes: Record<string, { windows: OccurrenceWindow[]; error?: string; cachedMs?: number }>;
+        try {
+            outcomes = await this.readExternalBusyWindows(sources, windowStart, windowEnd);
+        } catch (err: any) {
+            // The whole call failing (not one feed) is a wiring surprise, not a down feed - logged, never thrown.
+            this.logger?.warn(`BookingRoute: could not check booking type ${bookingType.uid}'s external calendars: ${err?.message ?? err}`);
+            return [];
+        }
+        for (const source of sources) {
+            const outcome = outcomes[source.uid];
+            if (outcome?.error) {
+                this.logger?.warn(
+                    `BookingRoute: booking type ${bookingType.uid}'s external calendar '${source.label ?? source.url}' could not be read: ${outcome.error}`,
+                );
+            }
+        }
+        return sources.flatMap((source) => outcomes[source.uid]?.windows ?? []);
+    }
+
     /**
      * Counts the non-cancelled bookings already placed on the local calendar date containing `slotStart`.
      *
@@ -782,7 +828,10 @@ export abstract class BaseBookingRoute<
         const events: CE[] = (await this.findBusyEvents(await this.busyFolderUids(bookingType), paddedStart, paddedEnd)).filter(
             (event) => event.uid !== excludeEventUid,
         );
-        const busy: OccurrenceWindow[] = computeBusyWindows(events, paddedStart, paddedEnd);
+        const busy: OccurrenceWindow[] = [
+            ...computeBusyWindows(events, paddedStart, paddedEnd),
+            ...(await this.externalBusyWindows(bookingType, paddedStart, paddedEnd)),
+        ];
         if (subtractBusy([slot], busy, bookingType.bufferBeforeMinutes, bookingType.bufferAfterMinutes).length === 0) {
             throw new ApiError(ApiErrors.IDENTIFIER_EXISTS, 409, "That time is no longer available.");
         }
@@ -1312,6 +1361,7 @@ export abstract class BaseBookingRoute<
     @Summary("Retrieves the public details of a booking type.")
     @Description("Returns the publicly visible details of an enabled booking type. Requires no authentication.")
     @Get("/types/:mailboxUid/:slug")
+    @Auth([], false)
     public async publicBookingType(@Param("mailboxUid") mailboxUid: string, @Param("slug") slug: string): Promise<PublicBookingType> {
         const bookingType: BT = await this.requireBookingType(mailboxUid, slug);
         const mailbox: M | undefined = await this.mailboxRepo!.findOne(bookingType.mailboxUid, { ignoreACL: true });
@@ -1325,6 +1375,7 @@ export abstract class BaseBookingRoute<
             "is not already busy for. Requires no authentication.",
     )
     @Get("/types/:mailboxUid/:slug/slots")
+    @Auth([], false)
     public async slots(
         @Param("mailboxUid") mailboxUid: string,
         @Param("slug") slug: string,
@@ -1353,7 +1404,10 @@ export abstract class BaseBookingRoute<
         const busyFrom: Date = new Date(candidates[0].start.getTime() - bookingType.bufferBeforeMinutes * 60_000);
         const busyTo: Date = new Date(candidates[candidates.length - 1].end.getTime() + bookingType.bufferAfterMinutes * 60_000);
         const events: CE[] = await this.findBusyEvents(await this.busyFolderUids(bookingType), busyFrom, busyTo);
-        const busy: OccurrenceWindow[] = computeBusyWindows(events, busyFrom, busyTo);
+        const busy: OccurrenceWindow[] = [
+            ...computeBusyWindows(events, busyFrom, busyTo),
+            ...(await this.externalBusyWindows(bookingType, busyFrom, busyTo)),
+        ];
 
         // Capped: a visitor wanting later slots asks again with a later `from`.
         return subtractBusy(candidates, busy, bookingType.bufferBeforeMinutes, bookingType.bufferAfterMinutes).slice(0, MAX_SLOTS_PER_RESPONSE);
@@ -1437,6 +1491,7 @@ export abstract class BaseBookingRoute<
     )
     @Post("/types/:mailboxUid/:slug")
     @Validate("validateBook")
+    @Auth([], false)
     public async book(
         @Param("mailboxUid") mailboxUid: string,
         @Param("slug") slug: string,
@@ -1538,6 +1593,7 @@ export abstract class BaseBookingRoute<
     @Summary("Retrieves a booking by its manage token.")
     @Description("Returns the booker's own view of their booking. Requires no authentication beyond the token itself.")
     @Get("/manage/:token")
+    @Auth([], false)
     public async manage(@Param("token") token: string): Promise<PublicBooking> {
         const booking: B = await this.requireBookingByToken(token);
         const bookingType: BT | undefined = await this.bookingTypeRepo!.findOne(booking.bookingTypeUid, { ignoreACL: true });
@@ -1554,6 +1610,7 @@ export abstract class BaseBookingRoute<
     )
     @RateLimit()
     @Post("/manage/:token/cancel")
+    @Auth([], false)
     public async cancel(@Param("token") token: string, body: { content?: unknown } | undefined): Promise<PublicBooking> {
         const booking: B = await this.requireBookingByToken(token);
         const bookingType: BT | undefined = await this.bookingTypeRepo!.findOne(booking.bookingTypeUid, { ignoreACL: true });
@@ -1608,6 +1665,7 @@ export abstract class BaseBookingRoute<
     )
     @RateLimit()
     @Post("/manage/:token/reschedule")
+    @Auth([], false)
     public async reschedule(@Param("token") token: string, body: { start?: string; content?: unknown; linkKey?: unknown } | undefined): Promise<PublicBooking> {
         const booking: B = await this.requireBookingByToken(token);
         if (booking.status === BookingStatus.CANCELLED) {

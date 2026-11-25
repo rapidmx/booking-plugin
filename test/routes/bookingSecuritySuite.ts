@@ -33,6 +33,9 @@ export interface BookingSecuritySuiteContext {
     updateEvent: (uid: string, patch: any) => Promise<void>;
     findBookings: () => Promise<any[]>;
     rateLimiter: () => any;
+    /** A JWT of a user with no special roles, for the test that needs a *signed-in* visitor - whose browser then also
+     * carries a `jwt` cookie, which is what makes a request cookie-authenticated and therefore CSRF-checked. */
+    signedInToken: () => string;
 }
 
 export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
@@ -365,6 +368,52 @@ export function bookingSecuritySuite(ctx: BookingSecuritySuiteContext): void {
             // Retrying the cancel now works, and cancels the event too.
             expect((await manage(token, "cancel")).status).toBe(200);
             expect((await ctx.findEvents())[0].status).toBe(CalendarEventStatus.CANCELLED);
+        });
+    });
+
+    describe("embedded booking pages", () => {
+        // The anonymous endpoints carry `@Auth([], false)` (see `BaseBookingRoute`'s "Anonymous endpoints" note), so no
+        // request here is ever cookie-authenticated and the CSRF origin allow-list can't reject it. Without it, a
+        // visitor signed into the webmail - whose browser attaches the `jwt` cookie, plus the matching csrf cookie and
+        // header a page on another origin can perfectly well send - gets 403 `api-105` from a booking page embedded on
+        // someone else's site, because that site's origin is not in `cors.origins`. Same report as rapidmx/server#13.
+        it("books from a signed-in visitor on another origin, double-submit pair included", async () => {
+            const bookingType = await ctx.createBookingType();
+            const page: any = await request(ctx.app()).get(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}`);
+            const setCookie: string[] = Array.isArray(page.headers["set-cookie"]) ? page.headers["set-cookie"] : [page.headers["set-cookie"]];
+            const csrf: string | undefined = setCookie
+                .flatMap((value) => String(value).split(";"))
+                .map((pair) => /^csrf=(.*)$/.exec(pair.trim()))
+                .filter(Boolean)
+                .map((match) => match![1])[0];
+            expect(csrf).toBeTruthy();
+
+            const booked = await request(ctx.app())
+                .post(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}`)
+                .set("Cookie", `jwt=${ctx.signedInToken()}; csrf=${csrf}`)
+                .set("x-csrf-token", csrf)
+                .set("Origin", "https://embedding.example.com")
+                .send(validBooking());
+            expect(booked.status).toBe(200);
+            expect(await ctx.findBookings()).toHaveLength(1);
+        });
+
+        it("cancels for a signed-in visitor on another origin", async () => {
+            const bookingType = await ctx.createBookingType();
+            const booked = await request(ctx.app())
+                .post(`${ctx.baseUrl}/types/${ctx.mailboxUid()}/${bookingType.slug}`)
+                .send(validBooking());
+            expect(booked.status).toBe(200);
+            const token: string = booked.body.manageToken;
+            const csrf: string = "a".repeat(32);
+            const cancelled = await request(ctx.app())
+                .post(`${ctx.baseUrl}/manage/${token}/cancel`)
+                .set("Cookie", `jwt=${ctx.signedInToken()}; csrf=${csrf}`)
+                .set("x-csrf-token", csrf)
+                .set("Origin", "https://embedding.example.com")
+                .send({});
+            expect(cancelled.status).toBe(200);
+            expect((await ctx.findBookings())[0].status).toBe(BookingStatus.CANCELLED);
         });
     });
 }

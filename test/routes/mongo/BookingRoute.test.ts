@@ -22,6 +22,7 @@ import { MongoMemoryServer } from "mongodb-memory-server";
 import { VideoMeetingMongo, VideoMeetingInviteeMongo } from "@rapidmx/meet-plugin/mongo";
 import { InMemoryBlobStore, RecordingMailTransport, registerTestDoubles } from "../../testDoubles.js";
 import { bookingSecuritySuite } from "../bookingSecuritySuite.js";
+import { bookingExternalBusySuite } from "../bookingExternalBusySuite.js";
 import { bookingMailboxSuite } from "../bookingMailboxSuite.js";
 import { bookingProtectionSuite } from "../bookingProtectionSuite.js";
 import { BookingKeyExpiryJobMongo } from "../../../src/jobs/mongo/BookingKeyExpiryJobMongo.js";
@@ -1617,6 +1618,15 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
         },
         findBookings: async () => await bookingRepo.find({}).toArray(),
         rateLimiter: () => objectFactory.getInstance(RateLimiter),
+        signedInToken: () => ownerToken,
+    });
+    bookingExternalBusySuite({
+        app: () => server.getApplication(),
+        baseUrl,
+        mailboxUid: () => mailbox.uid,
+        createBookingType,
+        findBookings: async () => await bookingRepo.find({}).toArray(),
+        route: () => objectFactory.getInstance("routes.BookingRoute"),
     });
     bookingMailboxSuite({
         app: () => server.getApplication(),

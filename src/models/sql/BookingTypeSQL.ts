@@ -5,7 +5,7 @@
 import { ObjectDecorators } from "@rapidrest/core";
 import { BaseEntity, DocDecorators, ModelDecorators, PersistenceDecorators } from "@rapidrest/service-core";
 import { MailboxScopedData } from "@rapidmx/restapi";
-import { BookingAvailabilityWindow, BookingDateOverride, BookingMeetingType, BookingType } from "../types.js";
+import { BookingAvailabilityWindow, BookingDateOverride, BookingMeetingType, BookingType, ExternalBusySource } from "../types.js";
 const { Description } = DocDecorators;
 const { DataStore, Protect } = ModelDecorators;
 const { Column, Entity, Index } = PersistenceDecorators;
@@ -75,6 +75,11 @@ export class BookingTypeSQL extends BaseEntity implements BookingType {
     @Description("Per-date replacements for availability. An empty windows array is a blackout day.")
     public dateOverrides: BookingDateOverride[] = [];
 
+    @Column({ type: "simple-json", nullable: true })
+    @Description("External calendars whose busy windows also block this type's slots. Unset means none.")
+    @Nullable
+    public externalBusySources?: ExternalBusySource[];
+
     @Column({ nullable: true })
     @Description("How far apart consecutive candidate slot starts are, in minutes. Defaults to durationMinutes.")
     @Nullable
@@ -123,6 +128,7 @@ export class BookingTypeSQL extends BaseEntity implements BookingType {
             this.timezone = other.timezone !== undefined ? other.timezone : this.timezone;
             this.availability = other.availability !== undefined ? other.availability : this.availability;
             this.dateOverrides = other.dateOverrides !== undefined ? other.dateOverrides : this.dateOverrides;
+            this.externalBusySources = "externalBusySources" in other ? other.externalBusySources : this.externalBusySources;
             this.slotIntervalMinutes = "slotIntervalMinutes" in other ? other.slotIntervalMinutes : this.slotIntervalMinutes;
             this.bufferBeforeMinutes = other.bufferBeforeMinutes !== undefined ? other.bufferBeforeMinutes : this.bufferBeforeMinutes;
             this.bufferAfterMinutes = other.bufferAfterMinutes !== undefined ? other.bufferAfterMinutes : this.bufferAfterMinutes;

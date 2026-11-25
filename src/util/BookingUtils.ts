@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MPL-2.0
 ///////////////////////////////////////////////////////////////////////////////
 import { BookingAvailabilityWindow, BookingLocationOption, BookingLocationType, BookingMeetingType, BookingType } from "../models/types.js";
+import { validateExternalBusySources } from "./ExternalBusyUtils.js";
 import { convertLocalToUtc, type OccurrenceWindow } from "@rapidmx/restapi";
 
 const MS_PER_MINUTE = 60_000;
@@ -183,6 +184,11 @@ export function validateAvailability(bookingType: Partial<BookingType>): string 
     }
     if (bookingType.dateOverrides !== undefined && (!Array.isArray(bookingType.dateOverrides) || bookingType.dateOverrides.length > MAX_DATE_OVERRIDES)) {
         return `dateOverrides must be a list of at most ${MAX_DATE_OVERRIDES} dates.`;
+    }
+    // External busy feeds are checked by the same rules the fetcher enforces, so nothing saveable is unfetchable.
+    const busySourcesProblem: string | undefined = validateExternalBusySources(bookingType.externalBusySources);
+    if (busySourcesProblem) {
+        return busySourcesProblem;
     }
     for (const override of bookingType.dateOverrides ?? []) {
         if (override?.windows !== undefined && (!Array.isArray(override.windows) || override.windows.length > MAX_AVAILABILITY_WINDOWS)) {

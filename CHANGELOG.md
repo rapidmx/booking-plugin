@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added connected calendars to a booking link: `BookingType.externalBusySources` lists up to ten external calendars by
+  their published ICS address, and every busy window one reports blocks that link's slots exactly as the mailbox's own
+  calendar does (`rapidmx/server#11`)
+- Added the Connected calendars panel to the booking link settings page, with `ExternalBusyEditor`
+- Added `util/ExternalBusyUtils.ts`: the https-only, public-address-checked ICS fetch, a busy-time-only ICS parser, and
+  a short-lived per-feed cache that keeps a feed's last good answer blocking slots through a brief outage
+
+### Fixed
+- Fixed a booking page embedded on another site failing with 403 `api-105` for a visitor signed into the webmail: the
+  anonymous booking endpoints (`/api/mail/bookings` public type/slots/book and the manage-token endpoints) now run no
+  auth strategy (`@Auth([], false)`), so service-core's CSRF origin allow-list - the deployment's own hosts, never the
+  site embedding the page - cannot reject their writes (`rapidmx/server#13`)
+
 ## [0.15.0] - 2026-11-05
 
 ### Added

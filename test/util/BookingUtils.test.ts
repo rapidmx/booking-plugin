@@ -286,6 +286,21 @@ describe("validateAvailability() Tests", () => {
     it("Accepts a well-formed configuration.", () => {
         expect(validateAvailability(makeBookingType())).toBeUndefined();
     });
+    it("Accepts external busy sources, and a configuration without them.", () => {
+        expect(validateAvailability(makeBookingType({ externalBusySources: [{ uid: "s1", url: "https://calendar.example.com/a.ics" }] }))).toBeUndefined();
+        expect(validateAvailability(makeBookingType({ externalBusySources: [{ uid: "s1", label: "Spouse", url: "https://calendar.example.com/a.ics" }] }))).toBeUndefined();
+        expect(validateAvailability(makeBookingType({ externalBusySources: [] }))).toBeUndefined();
+    });
+
+    it("Rejects an external busy source the fetcher could not read.", () => {
+        // The address rules are `ExternalBusyUtils`' own, so what saves is what can be fetched.
+        expect(validateAvailability({ externalBusySources: [{ url: "http://calendar.example.com/a.ics" }] })).toMatch(/https:\/\//);
+        expect(validateAvailability({ externalBusySources: [{ url: "https://169.254.169.254/latest" }] })).toMatch(/public internet/);
+        expect(validateAvailability({ externalBusySources: [{ url: "https://localhost:8443/a.ics" }] })).toMatch(/public internet/);
+        expect(validateAvailability({ externalBusySources: [{ url: "not a url" }] })).toMatch(/full URL/);
+        expect(validateAvailability({ externalBusySources: [{ url: "https://calendar.example.com/a.ics", label: "x".repeat(201) }] })).toMatch(/label/);
+        expect(validateAvailability({ externalBusySources: Array.from({ length: 11 }, (_, i) => ({ url: `https://c.example/${i}.ics` })) })).toMatch(/at most 10/);
+    });
 
     it("Accepts a partial patch that touches none of the validated fields.", () => {
         expect(validateAvailability({ name: "Renamed" })).toBeUndefined();

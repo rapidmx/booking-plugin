@@ -10,6 +10,7 @@ import {
     BookingLocationType,
     BookingMeetingType,
     BookingType,
+    ExternalBusySource,
     PublicBooking,
     bookingPublicUrl,
     deleteBookingType,
@@ -20,6 +21,7 @@ import {
 } from "../shared/bookingApi.js";
 import SettingsShell, { SettingsShellProps, useSettingsShell } from "@rapidmx/web-client/shared/components/settings/layout/SettingsShell.js";
 import AvailabilityEditor from "../shared/components/AvailabilityEditor.js";
+import ExternalBusyEditor from "../shared/components/ExternalBusyEditor.js";
 import MeetingTypesEditor from "../shared/components/MeetingTypesEditor.js";
 import MailboxSelect from "../shared/components/MailboxSelect.js";
 import Alert from "@rapidmx/web-client/lib/components/feedback/Alert.js";
@@ -55,6 +57,7 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
     const [timezone, setTimezone] = useState("");
     const timeZones = useMemo(() => timeZoneOptions(timezone), [timezone]);
     const [availability, setAvailability] = useState<BookingAvailabilityWindow[]>([]);
+    const [externalBusySources, setExternalBusySources] = useState<ExternalBusySource[]>([]);
     const [minimumNoticeMinutes, setMinimumNoticeMinutes] = useState(60);
     const [bookingWindowDays, setBookingWindowDays] = useState(30);
     const [requiresApproval, setRequiresApproval] = useState(false);
@@ -91,6 +94,7 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
                 setMeetingTypes(bt.meetingTypes);
                 setTimezone(bt.timezone);
                 setAvailability(bt.availability);
+                setExternalBusySources(bt.externalBusySources ?? []);
                 setMinimumNoticeMinutes(bt.minimumNoticeMinutes);
                 setBookingWindowDays(bt.bookingWindowDays);
                 setRequiresApproval(bt.requiresApproval);
@@ -164,6 +168,9 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
                 meetingTypes,
                 timezone,
                 availability,
+                // Sent whole (an empty list clears every connection): the panel is the whole list, not a patch.
+                // Rows the editor minted client-side (`tmp-` ids) send no uid, so the server mints a real one.
+                externalBusySources: externalBusySources.map(({ uid, ...source }) => (uid && !uid.startsWith("tmp-") ? { uid, ...source } : source)),
                 minimumNoticeMinutes,
                 bookingWindowDays,
                 requiresApproval,
@@ -330,6 +337,11 @@ function BookingTypeDetailContent({ uid }: { uid: string }) {
                     <div className="mb-4">
                         <span className="block text-sm font-semibold mb-1.5 text-text">Weekly availability</span>
                         <AvailabilityEditor value={availability} onChange={setAvailability} />
+                    </div>
+
+                    <div className="mb-4">
+                        <span className="block text-sm font-semibold mb-1.5 text-text">Connected calendars</span>
+                        <ExternalBusyEditor value={externalBusySources} onChange={setExternalBusySources} />
                     </div>
 
                     <div>

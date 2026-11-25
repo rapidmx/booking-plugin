@@ -53,6 +53,18 @@ export interface BookingMeetingType {
     locationOptions: BookingLocationOption[];
 }
 
+/**
+ * Another calendar whose busy windows block this booking link's slots (`rapidmx/server#11`): the calendar's published
+ * ICS address, read server-side for busy intervals only - its event titles, places and guests are never fetched.
+ */
+export interface ExternalBusySource {
+    /** Assigned by the server on save; a new entry sends none. */
+    uid?: string;
+    /** What the settings screen calls this calendar, e.g. "Spouse". */
+    label?: string;
+    url: string;
+}
+
 export interface BookingType {
     uid: string;
     version: number;
@@ -68,6 +80,7 @@ export interface BookingType {
     timezone: string;
     availability: BookingAvailabilityWindow[];
     dateOverrides: BookingDateOverride[];
+    externalBusySources?: ExternalBusySource[];
     slotIntervalMinutes?: number;
     bufferBeforeMinutes: number;
     bufferAfterMinutes: number;
@@ -113,6 +126,8 @@ export interface CreateBookingTypeInput {
     timezone: string;
     availability?: BookingAvailabilityWindow[];
     dateOverrides?: BookingDateOverride[];
+    /** External calendars whose busy windows block this link's slots. Sent whole; an omitted field is left unchanged. */
+    externalBusySources?: ExternalBusySource[];
     slotIntervalMinutes?: number;
     bufferBeforeMinutes?: number;
     bufferAfterMinutes?: number;
@@ -154,6 +169,8 @@ export interface UpdateBookingTypeInput {
     timezone?: string;
     availability?: BookingAvailabilityWindow[];
     dateOverrides?: BookingDateOverride[];
+    /** External calendars whose busy windows block this link's slots. Sent whole; an omitted field is left unchanged. */
+    externalBusySources?: ExternalBusySource[];
     slotIntervalMinutes?: number;
     bufferBeforeMinutes?: number;
     bufferAfterMinutes?: number;

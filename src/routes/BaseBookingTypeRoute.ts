@@ -144,6 +144,19 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
         }
     }
 
+    /**
+     * Assigns `crypto.randomUUID()` to any external busy source in `o.externalBusySources` missing a `uid`, in place -
+     * the same in-place-mutation, caller-*preserved*-not-chose identity rule `normalizeMeetingTypeUids()` applies to
+     * meeting types and location options.
+     */
+    private normalizeExternalBusySourceUids(o: Partial<T>): void {
+        for (const source of (o as any).externalBusySources ?? []) {
+            if (!source?.uid) {
+                source.uid = crypto.randomUUID();
+            }
+        }
+    }
+
     /** Turns `validateAvailability()`'s message-or-`undefined` result into a `400`. */
     private requireValidAvailability(o: Partial<T>): void {
         const problem: string | undefined = validateAvailability(o);
@@ -181,6 +194,7 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
         const seenSlugs: Set<string> = new Set();
         for (const single of objs) {
             this.normalizeMeetingTypeUids(single);
+            this.normalizeExternalBusySourceUids(single);
             this.requireValidAvailability(single);
             await this.requireBookableFolder(single?.mailboxUid, single?.calendarFolderUid, user);
             await this.requireSlugFree(this.normalizeSlugOf(single), single.mailboxUid);
@@ -203,6 +217,7 @@ export abstract class BaseBookingTypeRoute<T extends BookingType> extends BaseSc
         // Validate/normalize only what the caller actually sent - `RepoUtils.update()` is a genuine partial
         // patch on both backends, so an absent `slug`/`availability` means "leave it alone", not "clear it".
         this.normalizeMeetingTypeUids(obj);
+        this.normalizeExternalBusySourceUids(obj);
         this.requireValidAvailability(obj);
         const slugSent: boolean = (obj as any).slug !== undefined;
         if (slugSent) {
