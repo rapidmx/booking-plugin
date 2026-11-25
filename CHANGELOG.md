@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fixed a booking page embedded on another site failing with 403 `api-105` for a visitor signed into the webmail: the
+  anonymous booking endpoints (`/api/mail/bookings` public type/slots/book and the manage-token endpoints) now run no
+  auth strategy (`@Auth([], false)`), so service-core's CSRF origin allow-list - the deployment's own hosts, never the
+  site embedding the page - cannot reject their writes (`rapidmx/server#13`)
+
 ## [0.15.0] - 2026-11-05
 
 ### Added

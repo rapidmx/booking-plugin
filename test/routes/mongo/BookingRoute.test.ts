@@ -1617,6 +1617,7 @@ describe("Route:BookingMongo Tests (anonymous)", () => {
         },
         findBookings: async () => await bookingRepo.find({}).toArray(),
         rateLimiter: () => objectFactory.getInstance(RateLimiter),
+        signedInToken: () => ownerToken,
     });
     bookingMailboxSuite({
         app: () => server.getApplication(),

@@ -82,7 +82,7 @@ import { profileImageVersion } from "./BaseBookingProfileRoute.js";
 const { Config, Init, Inject, Logger } = ObjectDecorators;
 const { Description, Summary } = DocDecorators;
 const { Transactional } = DatabaseDecorators;
-const { Get, Param, Post, Query, RateLimit, Request, Validate, User: AuthUser } = RouteDecorators;
+const { Get, Param, Post, Query, RateLimit, Request, Validate, User: AuthUser, Auth } = RouteDecorators;
 
 /**
  * The exact npm package name `PluginRegistry.isActive()` checks - see `maybeCreateVideoMeetingJoinUrl()`'s doc
@@ -298,6 +298,16 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+\.[^\s@]+$/;
  *
  * A booking type is addressed by its mailbox as well as its slug (`/types/:mailboxUid/:slug`), since a slug is only
  * unique within one mailbox.
+ *
+ * ## Anonymous endpoints
+ *
+ * The booker's endpoints - `publicBookingType()`, `slots()`, `book()`, and the three manage-token ones - carry `@Auth([], false)`:
+ * no auth strategy runs, so `req.auth` is never set and `RouteUtils.checkCsrf()` never gates them. They authorize by `slug` and by
+ * the unguessable `manageToken`, never by who is calling, so the CSRF double-submit check has nothing to protect here - and leaving
+ * it in place broke the documented embed flow: a visitor signed into the webmail carries a `jwt` cookie, which marks their request
+ * cookie-authenticated, and the check then rejects any `Origin` outside the deployment's `cors.origins` (the mail/auth hostnames,
+ * never the site the page is embedded on) with 403 `api-105`, matching double-submit pair included - see rapidmx/server#13. The
+ * `/host` endpoints are the opposite case and keep the default `["jwt"]` strategy: they act as the signed-in host.
  *
  * ## Rate limiting
  *
@@ -1312,6 +1322,7 @@ export abstract class BaseBookingRoute<
     @Summary("Retrieves the public details of a booking type.")
     @Description("Returns the publicly visible details of an enabled booking type. Requires no authentication.")
     @Get("/types/:mailboxUid/:slug")
+    @Auth([], false)
     public async publicBookingType(@Param("mailboxUid") mailboxUid: string, @Param("slug") slug: string): Promise<PublicBookingType> {
         const bookingType: BT = await this.requireBookingType(mailboxUid, slug);
         const mailbox: M | undefined = await this.mailboxRepo!.findOne(bookingType.mailboxUid, { ignoreACL: true });
@@ -1325,6 +1336,7 @@ export abstract class BaseBookingRoute<
             "is not already busy for. Requires no authentication.",
     )
     @Get("/types/:mailboxUid/:slug/slots")
+    @Auth([], false)
     public async slots(
         @Param("mailboxUid") mailboxUid: string,
         @Param("slug") slug: string,
@@ -1437,6 +1449,7 @@ export abstract class BaseBookingRoute<
     )
     @Post("/types/:mailboxUid/:slug")
     @Validate("validateBook")
+    @Auth([], false)
     public async book(
         @Param("mailboxUid") mailboxUid: string,
         @Param("slug") slug: string,
@@ -1538,6 +1551,7 @@ export abstract class BaseBookingRoute<
     @Summary("Retrieves a booking by its manage token.")
     @Description("Returns the booker's own view of their booking. Requires no authentication beyond the token itself.")
     @Get("/manage/:token")
+    @Auth([], false)
     public async manage(@Param("token") token: string): Promise<PublicBooking> {
         const booking: B = await this.requireBookingByToken(token);
         const bookingType: BT | undefined = await this.bookingTypeRepo!.findOne(booking.bookingTypeUid, { ignoreACL: true });
@@ -1554,6 +1568,7 @@ export abstract class BaseBookingRoute<
     )
     @RateLimit()
     @Post("/manage/:token/cancel")
+    @Auth([], false)
     public async cancel(@Param("token") token: string, body: { content?: unknown } | undefined): Promise<PublicBooking> {
         const booking: B = await this.requireBookingByToken(token);
         const bookingType: BT | undefined = await this.bookingTypeRepo!.findOne(booking.bookingTypeUid, { ignoreACL: true });
@@ -1608,6 +1623,7 @@ export abstract class BaseBookingRoute<
     )
     @RateLimit()
     @Post("/manage/:token/reschedule")
+    @Auth([], false)
     public async reschedule(@Param("token") token: string, body: { start?: string; content?: unknown; linkKey?: unknown } | undefined): Promise<PublicBooking> {
         const booking: B = await this.requireBookingByToken(token);
         if (booking.status === BookingStatus.CANCELLED) {

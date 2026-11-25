@@ -1610,6 +1610,7 @@ describe("Route:BookingSQL Tests (anonymous)", () => {
         },
         findBookings: async () => await bookingRepo.find(),
         rateLimiter: () => objectFactory.getInstance(RateLimiter),
+        signedInToken: () => ownerToken,
     });
     bookingMailboxSuite({
         app: () => server.getApplication(),
